@@ -137,20 +137,20 @@ class TestClassifyGap:
         assert self.classify_gap("Pass", "Pass") is None
         assert self.classify_gap("TP 1-", "TP 1-") is None
 
-    def test_beda_intensitas(self):
-        # Via Pass — berapapun jaraknya
-        assert self.classify_gap("Pass", "TP 1-") == "Beda Intensitas"
-        assert self.classify_gap("Pass", "TP 2-") == "Beda Intensitas"
-        assert self.classify_gap("Pass", "TP 1+") == "Beda Intensitas"
-        assert self.classify_gap("Pass", "TP 2+") == "Beda Intensitas"
-        # Sama arah — jarak 1
-        assert self.classify_gap("TP 1-", "TP 2-") == "Beda Intensitas"
-        assert self.classify_gap("TP 1+", "TP 2+") == "Beda Intensitas"
-        # Sama arah — jarak 2
-        assert self.classify_gap("TP 1-", "TP 2-") == "Beda Intensitas"
+    def test_beda_tingkatan(self):
+        # Selisih 1 level, arah sama (Pass→TP1 atau TP1→TP2 searah)
+        assert self.classify_gap("Pass", "TP 1-") == "Beda Tingkatan"
+        assert self.classify_gap("Pass", "TP 1+") == "Beda Tingkatan"
+        assert self.classify_gap("TP 1-", "TP 2-") == "Beda Tingkatan"
+        assert self.classify_gap("TP 1+", "TP 2+") == "Beda Tingkatan"
+
+    def test_gap_signifikan(self):
+        # Pass langsung ke TP 2 — melompati TP 1, apapun arahnya
+        assert self.classify_gap("Pass", "TP 2-") == "Gap Signifikan"
+        assert self.classify_gap("Pass", "TP 2+") == "Gap Signifikan"
 
     def test_beda_arah(self):
-        # Berlawanan tanda
+        # Berlawanan tanda — keduanya signed
         assert self.classify_gap("TP 1-", "TP 1+") == "Beda Arah"
         assert self.classify_gap("TP 2-", "TP 1+") == "Beda Arah"
         assert self.classify_gap("TP 1-", "TP 2+") == "Beda Arah"

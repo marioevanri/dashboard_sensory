@@ -1,35 +1,24 @@
-# ── Data & Database ─────────────────────────────────────────────
-raw_data/
-cache/
-*.parquet
-*.db
-*.sqlite
-*.sqlite3
-
-# ── Python ──────────────────────────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-.Python
+*.egg-info/
+.pytest_cache/
+
+# Data & cache (jangan commit data sensitif)
+raw_data/
+cache/
+*.xlsx
+*.xls
+
+# Database (generated)
+database/qc_sensory.db
+*.db
+
+# Environment
 .venv/
 venv/
-env/
-*.egg-info/
-dist/
-build/
+.env
 
-# ── OS ──────────────────────────────────────────────────────────
+# OS
 .DS_Store
 Thumbs.db
-desktop.ini
-
-# ── IDE ─────────────────────────────────────────────────────────
-.vscode/
-.idea/
-*.code-workspace
-
-# ── Streamlit ───────────────────────────────────────────────────
-.streamlit/secrets.toml
-
-# ── Logs ────────────────────────────────────────────────────────
-*.log

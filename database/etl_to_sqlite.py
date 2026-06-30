@@ -20,13 +20,14 @@ from pathlib import Path
 
 # ── CONFIG ───────────────────────────────────────────────────────
 _HERE      = Path(__file__).parent
+_ROOT      = _HERE.parent  # root project (berisi config.py)
 DB_PATH    = _HERE / "qc_sensory.db"
-RAW_FOLDER = _HERE.parent / "raw_data" / "sensory_bulanan"
+RAW_FOLDER = _ROOT / "raw_data" / "sensory_bulanan"
 
 # Tambahkan folder dashboard ke path supaya bisa import load_data
-_DASHBOARD = str(_HERE.parent / "dashboard")
-if _DASHBOARD not in sys.path:
-    sys.path.insert(0, _DASHBOARD)
+for _p in [str(_ROOT / "dashboard"), str(_ROOT)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
 def _load_data(raw_folder):

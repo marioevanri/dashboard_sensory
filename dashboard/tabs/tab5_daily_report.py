@@ -19,8 +19,88 @@ import io
 def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
     """Render Tab 5."""
     st.subheader("Daily Report — Status KimFis vs Verifikator")
-    st.caption("Garis = KimFis (semua mix) | Segitiga = Verifikator (sampling) | "
-               "! = TP 2±/TP 3 terdeteksi (Not Pass) | !! = Gap terlalu jauh (beda arah / >1 level)")
+
+    # ── Pengantar storytelling dari Tab 4 ────────────────────────
+    n_verif   = df["Verif_Status"].notna().sum()
+    n_pass    = (df["Verif_Status"] == "Pass").sum()
+    n_tp1     = df["Verif_Status"].isin(["TP 1-","TP 1+"]).sum()
+    n_tp2     = df["Verif_Status"].isin(["TP 2-","TP 2+"]).sum()
+    n_tp3     = (df["Verif_Status"] == "TP 3").sum()
+    n_not_pass = n_tp2 + n_tp3
+
+    st.markdown(
+        f"""
+        <div style="background:#f8f9fa; border-left:4px solid #185FA5;
+                    border-radius:8px; padding:14px 18px; margin-bottom:12px;
+                    font-size:14px; color:#1a1a1a; line-height:1.8;">
+        Di Tab Shift & Analis terlihat pola bias analis dan shift dengan gap tertinggi.
+        &nbsp; Tab ini menyajikan <b>detail per batch</b> untuk keputusan release harian
+        dan ekspor data ke database.
+        <br>
+        <span style="font-size:12px; color:#888;">
+        Chart bisa di-screenshot untuk dilampirkan ke email laporan harian.
+        &nbsp;·&nbsp; Tabel data bersih siap di-export ke CSV / Excel untuk database.
+        </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── KPI Mini — distribusi status periode filter ───────────────
+    if n_verif > 0:
+        pct_pass = round(n_pass / n_verif * 100, 1)
+        pct_tp1  = round(n_tp1  / n_verif * 100, 1)
+        pct_tp2  = round(n_tp2  / n_verif * 100, 1)
+        pct_tp3  = round(n_tp3  / n_verif * 100, 1)
+
+        # KPI pakai HTML supaya keterangan tidak terpotong
+        kpi_items = [
+            ("Total Terverif", f"{n_verif:,}", "", "#185FA5"),
+            ("✅ Pass",         f"{n_pass:,}",  f"{pct_pass}%", "#2E8B57"),
+            ("🟡 TP 1",         f"{n_tp1:,}",   f"{pct_tp1}% — masih release", "#D85A30"),
+            ("🟠 TP 2",         f"{n_tp2:,}",   f"{pct_tp2}% — blok sementara, tunggu Triangle Test", "#E65100"),
+            ("🔴 TP 3",         f"{n_tp3:,}",   f"{pct_tp3}% — BLOK segera", "#D32F2F"),
+        ]
+        cols = st.columns(5)
+        for col, (label, value, note, color) in zip(cols, kpi_items):
+            note_html = (
+                f'<div style="font-size:10.5px; color:#666; margin-top:3px; '
+                f'line-height:1.3; word-break:break-word;">{note}</div>'
+            ) if note else ""
+            with col:
+                st.markdown(
+                    f"""
+                    <div style="background:#f8f9fa; border-radius:8px;
+                                padding:10px 12px; border-top:3px solid {color};">
+                        <div style="font-size:11px; color:#888; margin-bottom:2px;">
+                            {label}
+                        </div>
+                        <div style="font-size:22px; font-weight:700; color:{color};">
+                            {value}
+                        </div>
+                        {note_html}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        if n_not_pass > 0:
+            st.warning(
+                f"⚠️ **{n_not_pass} sampel Not Pass** (TP 2: {n_tp2} · TP 3: {n_tp3}) "
+                f"pada periode yang dipilih. "
+                f"Untuk batch **preshipment/eksport**: semua mix wajib Pass — "
+                f"TP 1 sekalipun tidak diizinkan."
+            )
+        else:
+            st.success(
+                f"✅ Semua {n_verif:,} sampel terverifikasi dalam periode ini "
+                f"berstatus TP 1 atau Pass — tidak ada Not Pass."
+            )
+
+    st.caption(
+        "Garis = KimFis (semua mix) | Segitiga = Verifikator (sampling) | "
+        "! = TP 2±/TP 3 terdeteksi (Not Pass) | !! = Gap terlalu jauh (beda arah / >1 level)"
+    )
 
     # ── HELPERS ──────────────────────────────────────────────────
     STATUS_Y = {
@@ -46,6 +126,32 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
         return False
 
     # ── FILTER ───────────────────────────────────────────────────
+    import datetime as _dt
+
+    # Shortcut "Verifikasi Hari Ini"
+    vd_all_dates = df_all["Verif_Date"].dropna()
+    latest_verif = vd_all_dates.max().date() if not vd_all_dates.empty else None
+
+    sc1, sc2, sc3 = st.columns([1, 1, 2])
+    with sc1:
+        today_btn = st.button(
+            "📅 Verifikasi Terbaru",
+            help=f"Filter otomatis ke tanggal verifikasi terbaru ({latest_verif})",
+            use_container_width=True,
+            key="btn_today",
+        )
+    with sc2:
+        st.caption(
+            f"Tanggal verif terbaru: **{latest_verif}**"
+            if latest_verif else "Tidak ada data verifikasi"
+        )
+
+    # Kalau tombol ditekan, set session state ke mode filter verif + tanggal terbaru
+    if today_btn:
+        st.session_state["dr_mode"]      = "Filter per tanggal verifikasi"
+        st.session_state["_today_quick"] = True
+
+    st.markdown("")
     dr1, dr2 = st.columns([1, 1])
 
     with dr1:
@@ -65,9 +171,9 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
             batch_dr_pool = sorted(df_all["Batch_No"].dropna().unique())
 
         dr_batches = st.multiselect(
-            "Pilih Batch No (bisa lebih dari 1)",
+            "Pilih Batch No (opsional — kosongkan untuk lihat semua batch di tanggal)",
             batch_dr_pool,
-            placeholder="Pilih batch...",
+            placeholder="Pilih batch... (opsional)",
             key="dr_batch"
         )
 
@@ -79,15 +185,16 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
         key="dr_mode"
     )
 
-    # Date range hanya muncul kalau mode filter verif dipilih
+    # Date range
     dr_date_range = None
     if dr_mode == "Filter per tanggal verifikasi":
-        vd_all = df_all["Verif_Date"].dropna()
-        vd_min = vd_all.min().date()
-        vd_max = vd_all.max().date()
+        vd_min = vd_all_dates.min().date() if not vd_all_dates.empty else _dt.date.today()
+        vd_max = vd_all_dates.max().date() if not vd_all_dates.empty else _dt.date.today()
+        # Default ke tanggal terbaru (atau quick filter)
+        default_date = (vd_max, vd_max)
         dr_date_range = st.date_input(
             "Rentang tanggal verifikasi",
-            value=(vd_max, vd_max),
+            value=default_date,
             min_value=vd_min,
             max_value=vd_max,
             key="dr_date"
@@ -96,250 +203,60 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
     st.divider()
 
     # ── BUILD DATA ────────────────────────────────────────────────
-    if not dr_batches:
-        st.info("Pilih minimal 1 Batch No untuk menampilkan chart.")
-    else:
-        # Ambil SEMUA mix dari batch yang dipilih (tidak filter verif)
+    # Mode tanggal: tidak perlu pilih batch — langsung filter by verif date
+    if dr_mode == "Filter per tanggal verifikasi" and dr_date_range and len(dr_date_range) == 2:
+        vd1, vd2 = dr_date_range
+        rpt_date = df_all.copy()
+        if dr_prod != "Semua":
+            rpt_date = rpt_date[rpt_date["Product_Name"] == dr_prod]
+        if dr_batches:
+            rpt_date = rpt_date[rpt_date["Batch_No"].isin(dr_batches)]
+
+        # Tampilkan semua mix dari batch yang punya verifikasi di range tsb
+        verif_mask = (
+            rpt_date["Verif_Date"].notna() &
+            (rpt_date["Verif_Date"].dt.date >= vd1) &
+            (rpt_date["Verif_Date"].dt.date <= vd2)
+        )
+        batches_in_range = rpt_date[verif_mask]["Batch_No"].unique()
+
+        if len(batches_in_range) == 0:
+            st.info(f"Tidak ada verifikasi pada {vd1} s/d {vd2}.")
+        else:
+            rpt_all = rpt_date[rpt_date["Batch_No"].isin(batches_in_range)]
+            verif_mix_set = set(rpt_date[verif_mask]["Sample_ID"].tolist())
+            st.caption(
+                f"📅 {vd1} s/d {vd2} — "
+                f"**{len(batches_in_range)} batch** ditemukan dengan "
+                f"**{verif_mask.sum()} mix/IBC** terverifikasi."
+            )
+            _render_charts(
+                rpt_all, verif_mix_set,
+                dr_mode, STATUS_Y, STATUS_Y_LABEL, CRITICAL, is_far_gap
+            )
+
+    elif dr_batches:
         rpt_all = df_all.copy()
         if dr_prod != "Semua":
             rpt_all = rpt_all[rpt_all["Product_Name"] == dr_prod]
         rpt_all = rpt_all[rpt_all["Batch_No"].isin(dr_batches)]
 
-        # Kalau mode filter verif: tentukan mix mana yang verif-nya
-        # masuk range tanggal, tapi tetap tampilkan SEMUA mix di chart
-        verif_mix_set = set()
-        if dr_mode == "Filter per tanggal verifikasi" and dr_date_range and len(dr_date_range) == 2:
-            vd1, vd2 = dr_date_range
-            verif_mask = (
-                rpt_all["Verif_Date"].notna() &
-                (rpt_all["Verif_Date"].dt.date >= vd1) &
-                (rpt_all["Verif_Date"].dt.date <= vd2)
-            )
-            verif_mix_set = set(
-                rpt_all[verif_mask]["Sample_ID"].tolist()
-            )
-
         if rpt_all.empty:
             st.info("Tidak ada data untuk filter yang dipilih.")
         else:
-            groups = rpt_all.groupby(["Batch_No","Product_Name"], sort=False)
+            _render_charts(
+                rpt_all, set(),
+                "Semua mix di batch ini", STATUS_Y, STATUS_Y_LABEL, CRITICAL, is_far_gap
+            )
+    else:
+        st.info(
+            "💡 Pilih batch di atas, atau gunakan **Filter per tanggal verifikasi** "
+            "untuk melihat chart verifikasi tanpa harus pilih batch manual."
+        )
 
-            for (batch_no, prod_name), grp in groups:
-                # Sort Mix_Code sebagai angka bukan string (hindari 1,10,11,2,...)
-                grp = grp.copy()
-                grp["_mix_sort"] = pd.to_numeric(grp["Mix_Code"], errors="coerce").fillna(0)
-                grp = grp.sort_values("_mix_sort").drop(columns="_mix_sort").reset_index(drop=True)
-
-                # Kalau mode filter verif → hanya tampilkan mix yang
-                # Sample_ID-nya ada di verif_mix_set, PLUS semua mix KimFis
-                # untuk garis KimFis tetap lengkap.
-                # KimFis selalu semua; verif hanya yang dalam range.
-                mix_codes  = grp["Mix_Code"].tolist()
-                sample_ids = grp["Sample_ID"].tolist()
-                kf_status  = grp["KF_Status"].tolist()
-                verif_status_raw = grp["Verif_Status"].tolist()
-                comparison_raw   = grp["Comparison"].tolist()
-
-                # Jika mode filter verif: hapus verif di mix yang bukan dalam range
-                if dr_mode == "Filter per tanggal verifikasi" and verif_mix_set:
-                    vf_status  = [
-                        v if sid in verif_mix_set else None
-                        for v, sid in zip(verif_status_raw, sample_ids)
-                    ]
-                    comparison = [
-                        c if sid in verif_mix_set else "NO_VERIFICATION"
-                        for c, sid in zip(comparison_raw, sample_ids)
-                    ]
-                else:
-                    vf_status  = verif_status_raw
-                    comparison = comparison_raw
-
-                n_mix = len(mix_codes)
-
-                # ── Ukuran chart ──────────────────────────────────
-                chart_w = max(350, min(950, 180 + n_mix * 80))
-                chart_h = 340
-
-                # ── Judul proporsional, bagi 2 baris kalau panjang ──
-                # Estimasi maks karakter per baris berdasarkan lebar chart
-                chars_per_line = max(25, chart_w // 9)
-                full_title = f"{prod_name} — Batch {batch_no}"
-
-                if len(full_title) <= chars_per_line:
-                    # Muat 1 baris
-                    title_text = full_title
-                else:
-                    # Potong di " — Batch" supaya rapi
-                    split_marker = " — Batch "
-                    if split_marker in full_title:
-                        part1 = prod_name
-                        part2 = f"Batch {batch_no}"
-                        # Kalau part1 masih terlalu panjang, potong dengan …
-                        if len(part1) > chars_per_line:
-                            part1 = part1[:chars_per_line - 1] + "…"
-                        title_text = f"{part1}<br>{part2}"
-                    else:
-                        # Fallback: potong manual
-                        title_text = (full_title[:chars_per_line] + "<br>"
-                                      + full_title[chars_per_line:chars_per_line*2])
-
-                title_size = 11 if n_mix <= 2 else 13
-                # Kalau judul 2 baris, naikkan margin atas chart supaya tidak terpotong
-                title_lines = title_text.count("<br>") + 1
-                margin_top  = 50 + (title_lines - 1) * 18
-
-                fig = go.Figure()
-
-                # Garis referensi Pass
-                fig.add_hline(y=0, line_dash="dash",
-                              line_color="#2E8B57", line_width=1.5, opacity=0.55)
-
-                # ── KimFis: garis + titik biru (semua mix) ───────
-                kf_y = [STATUS_Y.get(s) for s in kf_status]
-                kf_x_plot = [mix_codes[i] for i, y in enumerate(kf_y) if y is not None]
-                kf_y_plot = [y for y in kf_y if y is not None]
-                kf_s_plot = [kf_status[i] for i, y in enumerate(kf_y) if y is not None]
-
-                if kf_x_plot:
-                    fig.add_trace(go.Scatter(
-                        x=kf_x_plot, y=kf_y_plot,
-                        mode="lines+markers",
-                        name="Kim-Fis",
-                        line=dict(color="#4DA6FF", width=2),
-                        marker=dict(symbol="circle", size=9,
-                                    color="#4DA6FF",
-                                    line=dict(color="#185FA5", width=1.5)),
-                        hovertemplate="<b>Mix %{x}</b><br>KimFis: %{customdata}<extra></extra>",
-                        customdata=kf_s_plot,
-                    ))
-
-                # ── Verifikator: segitiga merah (hanya yang sampling) ──
-                # 1 mix/IBC total di chart → open triangle; lainnya solid
-                vf_symbol = "triangle-up-open" if n_mix == 1 else "triangle-up"
-                vf_x_plot = [mix_codes[i] for i, v in enumerate(vf_status) if v is not None]
-                vf_y_plot = [STATUS_Y.get(v) for v in vf_status if v is not None]
-                vf_s_plot = [v for v in vf_status if v is not None]
-
-                if vf_x_plot:
-                    fig.add_trace(go.Scatter(
-                        x=vf_x_plot, y=vf_y_plot,
-                        mode="markers",
-                        name="Verifikator",
-                        marker=dict(symbol=vf_symbol, size=14,
-                                    color="#D32F2F",
-                                    line=dict(color="#8B0000", width=2)),
-                        hovertemplate="<b>Mix %{x}</b><br>Verif: %{customdata}<extra></extra>",
-                        customdata=vf_s_plot,
-                    ))
-
-                # ── Anotasi per mix ───────────────────────────────
-                legend_critical = False
-                legend_far_gap  = False
-
-                for i, mx in enumerate(mix_codes):
-                    kf = kf_status[i]
-                    vf = vf_status[i]
-                    ky = STATUS_Y.get(kf)
-                    vy = STATUS_Y.get(vf) if vf else None
-                    # Gunakan index numerik untuk category axis
-                    # supaya posisi anotasi tepat di atas titiknya
-                    x_idx = i
-
-                    # Cek apakah ada kondisi CRITICAL di mix ini
-                    has_critical = (kf in CRITICAL) or (vf in CRITICAL)
-
-                    # 1. TP 2±/TP 3 di KimFis → tanda ! merah di atas titik KF
-                    if kf in CRITICAL and ky is not None:
-                        fig.add_annotation(
-                            x=x_idx, y=ky + 0.45,
-                            text="<b>!</b>",
-                            showarrow=False,
-                            font=dict(size=13, color="#D32F2F"),
-                            bgcolor="rgba(211,47,47,0.12)",
-                            bordercolor="#D32F2F",
-                            borderwidth=1,
-                            borderpad=2,
-                        )
-                        legend_critical = True
-
-                    # 2. TP 2±/TP 3 di Verif → tanda ! merah di atas titik Verif
-                    #    Tapi hanya kalau posisinya beda dengan KF (hindari duplikat)
-                    if vf in CRITICAL and vy is not None and ky != vy:
-                        fig.add_annotation(
-                            x=x_idx, y=vy + 0.45,
-                            text="<b>!</b>",
-                            showarrow=False,
-                            font=dict(size=13, color="#D32F2F"),
-                            bgcolor="rgba(211,47,47,0.12)",
-                            bordercolor="#D32F2F",
-                            borderwidth=1,
-                            borderpad=2,
-                        )
-                        legend_critical = True
-
-                    # 3. Gap terlalu jauh → tanda !! oranye
-                    #    Hanya tampil kalau TIDAK ada kondisi CRITICAL di mix ini
-                    #    Karena ! lebih prioritas dari !!
-                    if (vf and is_far_gap(kf, vf)
-                            and ky is not None and vy is not None
-                            and not has_critical):
-                        fig.add_annotation(
-                            x=x_idx, y=vy + 0.45,
-                            text="<b>!!</b>",
-                            showarrow=False,
-                            font=dict(size=11, color="#E65100"),
-                            bgcolor="rgba(230,81,0,0.15)",
-                            bordercolor="#E65100",
-                            borderwidth=1.5,
-                            borderpad=3,
-                        )
-                        legend_far_gap = True
-
-                # Keterangan singkat di bawah chart
-                notes = []
-                if legend_critical:
-                    notes.append("**!** = TP 2± / TP 3 terdeteksi — Not Pass, perlu Triangle Test")
-                if legend_far_gap:
-                    notes.append("**!!** = Gap terlalu jauh — beda >1 level atau beda arah")
-                if notes:
-                    st.caption("  |  ".join(notes))
-
-                # ── Layout ────────────────────────────────────────
-                fig.update_layout(
-                    title=dict(text=title_text, font=dict(size=title_size),
-                               x=0, xanchor="left"),
-                    width=chart_w,
-                    height=chart_h,
-                    template="plotly_white",
-                    legend=dict(orientation="h", y=1.18, x=0.5,
-                                xanchor="center", font=dict(size=11)),
-                    margin=dict(t=margin_top + 20, b=50, l=60, r=20),
-                    xaxis=dict(
-                        title="Mix / IBC",
-                        type="category",
-                        tickmode="array",
-                        tickvals=mix_codes,
-                        ticktext=[str(m) for m in mix_codes],
-                        range=[-0.6, n_mix - 0.4],
-                    ),
-                    yaxis=dict(
-                        title="Status",
-                        tickmode="array",
-                        tickvals=list(STATUS_Y.values()),
-                        ticktext=list(STATUS_Y_LABEL.values()),
-                        range=[-2.8, 3.8],
-                        gridcolor="rgba(180,180,180,0.25)",
-                        gridwidth=1,
-                        zeroline=False,
-                    ),
-                )
-                st.plotly_chart(fig, use_container_width=False)
-
-    # ── Tabel Data Bersih — selalu tampil, tidak tergantung filter batch ──
+    # ── Tabel Data Bersih ─────────────────────────────────────────
     st.divider()
-    st.subheader("📋 Data Bersih — Semua Data")
-    st.caption("Diurutkan berdasarkan tanggal verifikasi terlama → terbaru. "
-               "Yang belum diverifikasi muncul di bawah.")
+    st.subheader("📋 Data Bersih")
 
     # Helper cari kolom analis
     def _get_col(df, no, suffix):
@@ -347,9 +264,19 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
             if c in df.columns: return c
         return None
 
-    # Sumber: df_all — semua data tanpa filter apapun (termasuk yg belum diverif)
-    tbl_src = df_all.copy()
-    # Tidak ada filter — semua mix/IBC ditampilkan
+    # Sumber: filter by batch kalau ada, fallback ke df_all
+    if dr_batches:
+        tbl_src = df_all[df_all["Batch_No"].isin(dr_batches)].copy()
+        st.caption(
+            f"Menampilkan data untuk batch yang dipilih: "
+            f"**{', '.join(dr_batches)}**  ·  "
+            f"Hapus pilihan batch untuk lihat semua data."
+        )
+    else:
+        tbl_src = df_all.copy()
+        st.caption(
+            "Menampilkan semua data. Pilih batch di atas untuk filter lebih spesifik."
+        )
 
     clean_rows = []
     for _, r in tbl_src.iterrows():
@@ -385,7 +312,7 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
         )
 
     # Sort: Tgl Analisa ascending → Batch → Mix/IBC sebagai angka
-    # Semua baris tampil (termasuk yg belum diverif)
+    # Semua baris tampil (termasuk yg tidak diverifikasi)
     tbl_clean["_date_sort"] = pd.to_datetime(tbl_clean["Tgl Analisa"], errors="coerce")
     tbl_clean["_mix_sort"]  = pd.to_numeric(tbl_clean["Mix/IBC"], errors="coerce").fillna(0)
     tbl_clean = tbl_clean.sort_values(
@@ -404,14 +331,14 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
             tbl_clean[dc] = tbl_clean[dc].where(tbl_clean[dc] != "NaT", "")
 
     total_rows    = len(tbl_clean)
-    total_verif   = (tbl_clean["Tgl Verifikasi"] != "").sum()
+    total_verif   = tbl_clean["Status Verif"].notna().sum()
     total_mismatch= (tbl_clean["Comparison"] == "MISMATCH").sum()
     total_noverif = total_rows - total_verif
 
     st.caption(
         f"{total_rows:,} total mix/IBC  ·  "
         f"{total_verif:,} terverifikasi  ·  "
-        f"{total_noverif:,} belum diverif  ·  "
+        f"{total_noverif:,} tidak diverifikasi  ·  "
         f"{total_mismatch:,} mismatch"
     )
 
@@ -438,3 +365,153 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
             )
         except:
             pass
+
+def _render_charts(rpt_all, verif_mix_set, dr_mode,
+                   STATUS_Y, STATUS_Y_LABEL, CRITICAL, is_far_gap):
+    """Render scatter chart KimFis vs Verif per batch."""
+    import plotly.graph_objects as go
+
+    STATUS_Y_COLORS = {
+        "TP 2-":"#8B0000","TP 1-":"#D85A30",
+        "Pass":"#2E8B57",
+        "TP 1+":"#4DA6FF","TP 2+":"#1565C0","TP 3":"#0D0D5C",
+    }
+
+    groups = rpt_all.groupby(["Batch_No","Product_Name"], sort=False)
+
+    for (batch_no, prod_name), grp in groups:
+        grp = grp.copy()
+        grp["_mix_sort"] = pd.to_numeric(grp["Mix_Code"], errors="coerce").fillna(0)
+        grp = grp.sort_values("_mix_sort").drop(columns="_mix_sort").reset_index(drop=True)
+
+        mix_codes        = grp["Mix_Code"].tolist()
+        sample_ids       = grp["Sample_ID"].tolist()
+        kf_status        = grp["KF_Status"].tolist()
+        verif_status_raw = grp["Verif_Status"].tolist()
+        comparison_raw   = grp["Comparison"].tolist()
+
+        if dr_mode == "Filter per tanggal verifikasi" and verif_mix_set:
+            vf_status  = [
+                v if sid in verif_mix_set else None
+                for v, sid in zip(verif_status_raw, sample_ids)
+            ]
+            comparison = [
+                c if sid in verif_mix_set else "NO_VERIFICATION"
+                for c, sid in zip(comparison_raw, sample_ids)
+            ]
+        else:
+            vf_status  = verif_status_raw
+            comparison = comparison_raw
+
+        n_mix    = len(mix_codes)
+        chart_w  = max(350, min(950, 180 + n_mix * 80))
+        chart_h  = 340
+
+        chars_per_line = max(25, chart_w // 9)
+        full_title     = f"{prod_name} — Batch {batch_no}"
+        if len(full_title) <= chars_per_line:
+            title_text = full_title
+        else:
+            part1 = prod_name
+            if len(part1) > chars_per_line:
+                part1 = part1[:chars_per_line-1] + "…"
+            title_text = f"{part1}<br>Batch {batch_no}"
+
+        title_lines = title_text.count("<br>") + 1
+        margin_top  = 50 + (title_lines - 1) * 18
+
+        fig = go.Figure()
+
+        # KimFis line
+        ky_vals = [STATUS_Y.get(k) for k in kf_status]
+        kf_colors = [STATUS_Y_COLORS.get(k,"#aaa") for k in kf_status]
+        fig.add_trace(go.Scatter(
+            x=mix_codes, y=ky_vals, mode="lines+markers",
+            name="KimFis", line=dict(color="#185FA5", width=1.5, dash="dot"),
+            marker=dict(size=8, color=kf_colors, line=dict(color="#185FA5",width=1.5)),
+            text=[f"KF: {k}" for k in kf_status],
+            hovertemplate="%{text}<extra></extra>",
+        ))
+
+        # Verif markers
+        vf_y       = []
+        vf_colors  = []
+        vf_text    = []
+        vf_symbols = []
+        for x_idx, (vf, cmp, kf) in enumerate(zip(vf_status, comparison, kf_status)):
+            vy = STATUS_Y.get(vf) if vf else None
+            vf_y.append(vy)
+            vf_colors.append(STATUS_Y_COLORS.get(vf,"#aaa") if vf else "rgba(0,0,0,0)")
+            vf_text.append(f"Verif: {vf} ({cmp})" if vf else "Belum diverif")
+            # Pakai segitiga bolong kalau: hanya 1 mix ATAU status sama dengan KimFis
+            # supaya titik KimFis di bawahnya tetap terlihat
+            use_open = (n_mix == 1) or (vf == kf)
+            vf_symbols.append("triangle-up-open" if use_open else "triangle-up")
+
+        fig.add_trace(go.Scatter(
+            x=mix_codes, y=vf_y, mode="markers",
+            name="Verifikator",
+            marker=dict(
+                symbol=vf_symbols, size=14,
+                color=vf_colors,
+                line=dict(color="#EF9F27", width=2),
+            ),
+            text=vf_text,
+            hovertemplate="%{text}<extra></extra>",
+        ))
+
+        # Anotasi ! dan !!
+        legend_critical = False
+        legend_far_gap  = False
+        for x_idx, (kf, vf, cmp) in enumerate(zip(kf_status, vf_status, comparison)):
+            ky = STATUS_Y.get(kf)
+            vy = STATUS_Y.get(vf) if vf else None
+            has_critical = (kf in CRITICAL) or (vf in CRITICAL if vf else False)
+
+            if kf in CRITICAL and ky is not None:
+                fig.add_annotation(
+                    x=mix_codes[x_idx], y=ky+0.45, text="<b>!</b>",
+                    showarrow=False, font=dict(size=13,color="#D32F2F"),
+                    bgcolor="rgba(211,47,47,0.12)", bordercolor="#D32F2F",
+                    borderwidth=1, borderpad=2,
+                )
+                legend_critical = True
+            if vf in CRITICAL and vy is not None and ky != vy:
+                fig.add_annotation(
+                    x=mix_codes[x_idx], y=vy+0.45, text="<b>!</b>",
+                    showarrow=False, font=dict(size=13,color="#D32F2F"),
+                    bgcolor="rgba(211,47,47,0.12)", bordercolor="#D32F2F",
+                    borderwidth=1, borderpad=2,
+                )
+                legend_critical = True
+            if vf and is_far_gap(kf, vf) and ky is not None and vy is not None and not has_critical:
+                fig.add_annotation(
+                    x=mix_codes[x_idx], y=vy+0.45, text="<b>!!</b>",
+                    showarrow=False, font=dict(size=11,color="#E65100"),
+                    bgcolor="rgba(230,81,0,0.15)", bordercolor="#E65100",
+                    borderwidth=1.5, borderpad=3,
+                )
+                legend_far_gap = True
+
+        notes = []
+        if legend_critical: notes.append("**!** = TP 2± / TP 3 terdeteksi — Not Pass")
+        if legend_far_gap:  notes.append("**!!** = Gap terlalu jauh — beda >1 level atau beda arah")
+        if notes: st.caption("  |  ".join(notes))
+
+        fig.update_layout(
+            title=dict(text=title_text, font=dict(size=13 if n_mix > 2 else 11), x=0, xanchor="left"),
+            width=chart_w, height=chart_h,
+            template="plotly_white",
+            legend=dict(orientation="h", y=1.18, x=0.5, xanchor="center", font=dict(size=11)),
+            margin=dict(t=margin_top+20, b=50, l=60, r=20),
+            xaxis=dict(title="Mix / IBC", type="category",
+                       tickmode="array", tickvals=mix_codes,
+                       ticktext=[str(m) for m in mix_codes],
+                       range=[-0.6, n_mix-0.4]),
+            yaxis=dict(title="Status", tickmode="array",
+                       tickvals=list(STATUS_Y.values()),
+                       ticktext=list(STATUS_Y_LABEL.values()),
+                       range=[-2.8,3.8],
+                       gridcolor="rgba(180,180,180,0.25)", zeroline=False),
+        )
+        st.plotly_chart(fig, use_container_width=False)

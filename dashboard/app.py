@@ -2,15 +2,7 @@
 app.py
 ======
 QC Sensory Dashboard — Entry point utama.
-
-Menjalankan: streamlit run dashboard/app.py
-
-Semua logic tab ada di folder tabs/:
-    tab1_overview.py     — Overview & KPI
-    tab2_gap.py          — Gap Analysis
-    tab3_parameter.py    — Parameter Sensory
-    tab4_shift_analyst.py — Shift & Performa Analis
-    tab5_daily_report.py — Daily Report
+Jalankan: streamlit run dashboard/app.py
 """
 
 import sys
@@ -23,7 +15,7 @@ _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
 
-from config import RAW_FOLDER, CACHE_FILE
+from config import RAW_FOLDER
 from load_data import load_with_cache
 
 # ── IMPORT TAB MODULES ────────────────────────────────────────────
@@ -40,27 +32,19 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── CUSTOM CSS & FOOTER ───────────────────────────────────────────
+# ── CSS & FOOTER ──────────────────────────────────────────────────
 st.markdown("""
 <style>
 [data-testid="stMetricDelta"] svg { display: none; }
-
 footer { visibility: hidden; }
-
 .custom-footer {
-    position: fixed;
-    bottom: 0; left: 0;
-    width: 100%;
-    background-color: rgba(240, 242, 246, 0.95);
+    position: fixed; bottom: 0; left: 0; width: 100%;
+    background-color: rgba(240,242,246,0.95);
     border-top: 1px solid #ddd;
-    padding: 6px 20px;
-    font-size: 12px;
-    color: #888;
-    text-align: center;
-    z-index: 999;
+    padding: 6px 20px; font-size: 12px; color: #888;
+    text-align: center; z-index: 999;
 }
 </style>
-
 <div class="custom-footer">
     Dibuat oleh <strong>Mario Evanri</strong> &nbsp;·&nbsp;
     QC Sensory Dashboard &nbsp;·&nbsp;
@@ -86,45 +70,96 @@ with st.sidebar:
 
     df_all = get_data(False)
 
+    # Rentang tanggal tersedia
+    min_d = df_all["Date"].min().date()
+    max_d = df_all["Date"].max().date()
+
     st.divider()
     st.subheader("Filter")
 
-    # Rentang tanggal
-    min_d = df_all["Date"].min().date()
-    max_d = df_all["Date"].max().date()
-    _date_val = st.date_input(
-        "Rentang tanggal", value=(min_d, max_d),
-        min_value=min_d, max_value=max_d,
-    )
-    if isinstance(_date_val, (list, tuple)) and len(_date_val) == 2:
-        d1, d2 = _date_val
-    else:
-        d1 = d2 = _date_val[0] if _date_val else min_d
+    # ── Preset rentang tanggal ────────────────────────────────────
+    import datetime
+    today    = max_d  # pakai max tanggal data, bukan hari ini
 
-    # Produk
+    # ── Bangun preset otomatis berdasarkan tahun yang tersedia ───
+    # Tahun "penuh" = ada data di semua 12 bulan
+    _years_avail = sorted(
+        df_all["Date"].dropna().dt.year.unique().tolist()
+    )
+    _year_presets = {}
+    for _y in _years_avail:
+        _y_data = df_all[df_all["Date"].dt.year == _y]["Date"]
+        _months  = _y_data.dt.month.nunique()
+        _label   = f"Tahun {_y} (Full)" if _months == 12 else f"Tahun {_y} ({_months} bulan)"
+        _y_start = datetime.date(_y, 1, 1)
+        _y_end   = datetime.date(_y, 12, 31)
+        _year_presets[_label] = (_y_start, _y_end)
+
+    # Preset bulan ini dan 30 hari
+    _this_month_start = today.replace(day=1)
+    _30d_start        = today - datetime.timedelta(days=30)
+
+    presets = {
+        "30 Hari Terakhir": (_30d_start, today),
+        "Bulan Ini":        (_this_month_start, today),
+        **_year_presets,
+        "Semua Data":       (min_d, max_d),
+        "Custom":           None,
+    }
+
+    # Default ke tahun penuh terbaru (12 bulan)
+    _full_years = [k for k,_ in _year_presets.items() if "Full" in k]
+    _default_idx = list(presets.keys()).index(_full_years[-1]) if _full_years else 0
+
+    sel_preset = st.selectbox(
+        "Periode",
+        list(presets.keys()),
+        index=_default_idx,
+        key="preset_period",
+    )
+
+    if sel_preset == "Custom" or presets[sel_preset] is None:
+        _date_val = st.date_input(
+            "Rentang tanggal",
+            value=(min_d, max_d),
+            min_value=min_d,
+            max_value=max_d,
+            key="custom_date",
+        )
+        if isinstance(_date_val, (list, tuple)) and len(_date_val) == 2:
+            d1, d2 = _date_val
+        else:
+            d1 = d2 = _date_val[0] if _date_val else min_d
+    else:
+        d1, d2 = presets[sel_preset]
+        # Clamp ke range data yang tersedia
+        d1 = max(d1, min_d)
+        d2 = min(d2, max_d)
+        st.caption(f"📅 {d1.strftime('%d %b %Y')} — {d2.strftime('%d %b %Y')}")
+
+    # ── Filter lainnya ────────────────────────────────────────────
     all_prods = sorted(df_all["Product_Name"].dropna().unique())
     sel_prods = st.multiselect("Produk", all_prods, placeholder="Semua produk")
 
-    # Plant
     sel_plants = st.multiselect(
         "Plant",
-        ["Plant 1","Plant 2","Blending","Unknown"],
-        default=["Plant 1","Plant 2","Blending","Unknown"],
+        ["Plant 1", "Plant 2", "Blending", "Unknown"],
+        default=["Plant 1", "Plant 2", "Blending", "Unknown"],
     )
 
-    # Shift
     all_shifts = sorted(
         df_all["Shift_Code"].dropna().unique(),
-        key=lambda x: (float(x) if str(x).replace(".","").isdigit() else 99),
+        key=lambda x: (float(x) if str(x).replace(".", "").isdigit() else 99),
     )
     sel_shifts = st.multiselect("Shift", all_shifts, default=all_shifts)
 
-# ── FILTER ────────────────────────────────────────────────────────
+# ── APPLY FILTER ─────────────────────────────────────────────────
 mask = (
     (df_all["Date"].dt.date >= d1) &
     (df_all["Date"].dt.date <= d2) &
-    (df_all["Plant"].isin(sel_plants if sel_plants
-                          else ["Plant 1","Plant 2","Blending","Unknown"])) &
+    (df_all["Plant"].isin(
+        sel_plants if sel_plants else ["Plant 1","Plant 2","Blending","Unknown"]
+    )) &
     (df_all["Shift_Code"].isin(sel_shifts if sel_shifts else all_shifts))
 )
 if sel_prods:
@@ -136,7 +171,7 @@ df = df_all[mask].copy()
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Overview",
     "📈 Gap Analysis",
-    "🔬 Parameter",
+    "🔬 Parameter & Produk",
     "🏭 Shift & Analis",
     "📋 Daily Report",
 ])

@@ -21,6 +21,7 @@ import sqlite3
 from pathlib import Path
 
 _HERE   = Path(__file__).parent
+_ROOT   = _HERE.parent
 DB_PATH = _HERE / "qc_sensory.db"
 
 VALID_STATUS      = {"TP 2-","TP 1-","Pass","TP 1+","TP 2+","TP 3"}
