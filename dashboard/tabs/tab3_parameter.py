@@ -156,10 +156,10 @@ def _render_gap_per_parameter(df: pd.DataFrame) -> None:
 
     with col2:
         st.subheader("TP Rate per Parameter")
-        st.caption("% sampel yang hasilnya TP (bukan Pass) dari KimFis.")
+        st.caption("% sampel yang hasilnya TP (bukan Pass) dari Verifikator.")
         tp_stats = []
         for p in PARAM_COLS:
-            col = f"KF_{p}_Status"
+            col = f"V_{p}_Status"
             if col in df.columns:
                 total = df[col].notna().sum()
                 n_tp  = (df[col].notna() & (df[col] != "Pass")).sum()
