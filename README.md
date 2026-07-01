@@ -10,13 +10,13 @@
 Dashboard interaktif untuk analisis data evaluasi sensory produk krimer & susu di lingkungan manufaktur.  
 Dirancang untuk audience luas — QC, R&D, Produksi, Manager, hingga orang awam.
 
-> **Data:** ~6,286 mix/IBC · Jan–Des 2025 · 2 Plant · 7 parameter sensory
+ **Data:** ~6,286 mix/IBC · Jan–Des 2025 · 2 Plant · 7 parameter sensory
 
 ---
 
 ##  Latar Belakang
 
-Di industri manufaktur produk susu dan krimer, setiap batch produksi dievaluasi secara sensory oleh **3 analis lab Kimia Fisika (KimFis)** yang kemudian hasilnya diverifikasi oleh **Verifikator** (ground truth). Proses ini menghasilkan data yang perlu dimonitor secara sistematis untuk:
+Di industri manufaktur produk susu dan krimer, setiap batch produksi dievaluasi secara sensory oleh **3 analis lab Kimia-Fisika (KimFis)** yang kemudian hasilnya diverifikasi oleh **Verifikator** (ground truth). Proses ini menghasilkan data yang perlu dimonitor secara sistematis untuk:
 
 - Memastikan konsistensi kualitas produk antar batch dan shift
 - Mendeteksi gap (perbedaan) antara penilaian KimFis dan Verifikator
@@ -33,7 +33,7 @@ Di industri manufaktur produk susu dan krimer, setiap batch produksi dievaluasi 
 ##  Arsitektur ETL Pipeline
 
 ```
- Excel Bulanan (raw data)
+📂 Excel Bulanan (raw data)
         │
         ▼
 ┌───────────────────┐
@@ -62,7 +62,7 @@ Di industri manufaktur produk susu dan krimer, setiap batch produksi dievaluasi 
 
 ---
 
-## 📊 5 Pertanyaan Bisnis & Struktur Tab
+##  5 Pertanyaan Bisnis & Struktur Tab
 
 Dashboard dirancang sebagai drill-down dari big picture ke action level:
 
@@ -76,7 +76,7 @@ Tab 5: Action per batch?      → Detail harian, export data, keputusan release
 
 ---
 
-## 📊 Fitur Dashboard (5 Tab)
+##  Fitur Dashboard (5 Tab)
 
 ### Tab 1 — 📊 Overview
 - Executive Summary 2 box: distribusi kualitas (dari Verif, ground truth) + gap KimFis vs Verif
@@ -106,7 +106,7 @@ Tab 5: Action per batch?      → Detail harian, export data, keputusan release
 **Subtab B — Kualitas per Produk (untuk R&D & Produksi):**
 - Top 10 produk (3 mode: TP Rate / Jumlah Absolut / Composite)
 - Pass Rate terendah — produk prioritas evaluasi
-- Drill-down per produk: insight otomatis (deteksi all-TP1) + distribusi status Verif + trend Pass Rate + tabel parameter penyebab TP dengan arah dominan
+- Drill-down per produk: insight otomatis (deteksi all-TP1) + distribusi status Verif + trend Pass Rate + tabel parameter penyebab TP dari Verifikator dengan arah dominan
 
 ### Tab 4 — 🏭 Shift & Performa Analis
 - Gap rate per shift (1 chart bersih, merah = tertinggi)
@@ -266,7 +266,7 @@ Industri manufaktur produk krimer & susu · PT Lautan Natural Krimerindo
 
 ---
 
-##  Lisensi
+## Lisensi
 
 Project ini dibuat untuk keperluan internal QC dan portofolio pribadi.  
 Data sensory tidak disertakan dalam repository ini.

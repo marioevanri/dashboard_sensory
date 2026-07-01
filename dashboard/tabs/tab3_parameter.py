@@ -607,11 +607,11 @@ def _render_kualitas_per_produk(df: pd.DataFrame) -> None:
         )
         st.plotly_chart(fig_tr, use_container_width=True)
 
-    # Top parameter TP — full width di bawah charts
-    st.caption("**Parameter penyebab TP** (dari KimFis)")
+    # Top parameter TP — dari Verifikator (konsisten dengan distribusi status di atas)
+    st.caption("**Parameter penyebab TP** (dari Verifikator)")
     param_tp = []
     for p in PARAM_COLS:
-        col_p = f"KF_{p}_Status"
+        col_p = f"V_{p}_Status"
         if col_p in prod_all.columns:
             n_tp = (prod_all[col_p].notna() & (prod_all[col_p] != "Pass")).sum()
             if n_tp > 0:
@@ -625,8 +625,8 @@ def _render_kualitas_per_produk(df: pd.DataFrame) -> None:
                 else:
                     arah = "↕ bervariasi"
                 param_tp.append({
-                    "Parameter":  PARAM_LABELS.get(p, p),
-                    "Jumlah TP":  int(n_tp),
+                    "Parameter":    PARAM_LABELS.get(p, p),
+                    "Jumlah TP":    int(n_tp),
                     "% dari total": round(n_tp / len(prod_all) * 100, 1),
                     "Arah dominan": arah,
                 })

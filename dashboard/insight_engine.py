@@ -75,10 +75,10 @@ def gen_insight_gap_type(df_mm: pd.DataFrame, total_mm: int) -> dict:
             )
         elif top_cat == "Beda Arah":
             inference = (
-                f"Dengan {top_pct}% Beda Arah, KimFis dan Verifikator "
-                f"**berbeda persepsi arah** — satu menilai kurang, satu menilai lebih. "
-                f"Ini lebih serius dari Beda Tingkatan karena menyangkut "
-                f"pemahaman dasar terhadap karakteristik produk."
+                f"{top_pct}% gap adalah **Beda Arah** — "
+                f"KimFis dan Verifikator beda persepsi dasar: "
+                f"satu menilai produk kurang, satu menilai lebih. "
+                f"Ini lebih jarang terjadi tapi perlu penanganan khusus."
             )
         elif top_cat == "Melibatkan TP 3":
             inference = (
@@ -99,8 +99,9 @@ def gen_insight_gap_type(df_mm: pd.DataFrame, total_mm: int) -> dict:
             "Prioritaskan **screening (training) bertingkat** untuk kalibrasi sensorik analis — sesi deteksi intensitas per parameter (Creamy bertingkat, Milky bertingkat, dst.)."
         ),
         "Beda Arah": (
-            "Lakukan **sesi pelatihan persepsi dasar** — "
-            "review standar kurang (-) vs lebih (+) untuk tiap parameter "
+            "Lakukan **screening (training) persepsi dasar** — "
+            "sesi kalibrasi khusus untuk menyamakan pemahaman "
+            "arah kurang (-) vs lebih (+) per parameter, "
             "bersama seluruh analis dan Verifikator."
         ),
         "Melibatkan TP 3": (
@@ -232,7 +233,7 @@ def gen_insight_parameter(param_stats: list[dict]) -> dict:
         f"Parameter dengan gap rate tertinggi: **{top['param']}** "
         f"({top['rate']}% dari {top['total']:,} sampel). "
         + (f"**{bottom['param']}** paling rendah ({bottom['rate']}%)." if len(ranked) > 1 else "")
-        + (f" {len(critical)} parameter di atas rata-rata + 0.5σ ({mean_rate:.1f}%)."
+        + (f" {len(critical)} parameter dengan gap rate menonjol dibanding yang lain."
            if len(critical) > 0 else "")
     )
 
@@ -241,36 +242,32 @@ def gen_insight_parameter(param_stats: list[dict]) -> dict:
     inference = None
     if direction == "kurang":
         inference = (
-            f"Gap {top['param']} didominasi arah **kurang (↓)** — "
-            f"analis menilai produk sudah memenuhi standar, "
-            f"Verifikator menilai masih kurang. "
-            f"Ini menunjukkan **threshold toleransi yang berbeda** "
-            f"antara analis dan Verifikator untuk {top['param']}."
+            f"Gap {top['param']} kebanyakan arah **kurang (↓)** — "
+            f"analis menilai sudah Pass, Verifikator menilai masih kurang. "
+            f"Analis dan Verifikator perlu menyamakan persepsi "
+            f"soal standar {top['param']}."
         )
     elif direction == "lebih":
         inference = (
-            f"Gap {top['param']} didominasi arah **lebih (↑)** — "
-            f"analis menilai produk melampaui standar, "
-            f"Verifikator menilai masih dalam batas. "
-            f"Perlu review definisi batas atas untuk {top['param']}."
+            f"Gap {top['param']} kebanyakan arah **lebih (↑)** — "
+            f"analis menilai berlebih, Verifikator menilai masih dalam batas. "
+            f"Perlu samakan persepsi soal batas atas {top['param']}."
         )
     elif direction == "mixed":
         inference = (
-            f"Gap {top['param']} tidak punya arah dominan — "
-            f"beda arah antara analis dan Verifikator beragam. "
-            f"Kemungkinan standar referensi untuk {top['param']} "
-            f"belum cukup jelas atau konsisten."
+            f"Gap {top['param']} tidak punya arah yang konsisten — "
+            f"analis dan Verifikator beda arah secara bergantian. "
+            f"Standar referensi {top['param']} perlu diperjelas bersama."
         )
 
     crit_names = ", ".join([p["param"] for p in critical[:3]])
     action = (
-        f"Prioritaskan **screening (training) bertingkat** untuk parameter "
-        f"**{crit_names}** — sesi deteksi intensitas bertingkat "
-        f"(batas Pass vs TP 1, TP 1 vs TP 2) agar analis dan Verifikator "
-        f"punya referensi yang sama."
+        f"Fokuskan **screening bertingkat** berikutnya ke parameter "
+        f"**{crit_names}** — latih analis membedakan tingkatan "
+        f"Pass, TP 1, dan TP 2 untuk parameter ini."
     ) if critical else (
         "Gap rate semua parameter relatif merata — "
-        "lakukan screening bertingkat menyeluruh untuk seluruh parameter."
+        "lakukan screening bertingkat untuk seluruh parameter secara bersama."
     )
 
     confirm = (
@@ -311,37 +308,32 @@ def gen_insight_product(prod_name: str, tp_rate: float, pass_rate: float,
     if tp_rate >= 80:
         inference = (
             f"TP rate {tp_rate:.1f}% sangat tinggi — hampir semua sampel "
-            f"tidak mencapai Pass. Ini bukan variasi normal."
+            f"tidak mencapai Pass. Ini pola yang konsisten, bukan variasi sesekali."
         )
     elif tp_rate >= 50:
         inference = (
             f"TP rate {tp_rate:.1f}% — lebih dari separuh sampel tidak Pass. "
-            f"Perlu perhatian dari R&D dan Produksi."
+            f"Produk ini konsisten memerlukan perhatian lebih."
         )
     elif pass_rate >= 80:
         inference = (
             f"Pass rate {pass_rate:.1f}% — produk ini relatif konsisten memenuhi standar."
         )
 
-    # Action berbasis top_param + arah
-    if top_param and top_direction == "kurang":
+    # Action — konteks produk (bukan kalibrasi analis)
+    if tp_rate >= 50 and top_param:
         action = (
-            f"Parameter **{top_param}** (arah ↓ mendominasi) — "
-            f"koordinasikan dengan R&D: apakah ada penyesuaian formula atau proses "
-            f"yang bisa meningkatkan {top_param} produk ini?"
-        )
-    elif top_param and top_direction == "lebih":
-        action = (
-            f"Parameter **{top_param}** (arah ↑ mendominasi) — "
-            f"review batas atas standar {top_param} untuk produk ini bersama R&D."
+            f"Produk ini konsisten banyak TP di parameter **{top_param}** — "
+            f"ini sinyal kualitas produk yang perlu perhatian lebih, "
+            f"bukan masalah kalibrasi analis."
         )
     elif top_param:
         action = (
-            f"Parameter **{top_param}** paling sering TP — "
-            f"jadikan prioritas kalibrasi analis untuk produk ini."
+            f"Parameter **{top_param}** paling sering TP di produk ini — "
+            f"pantau tren ke depan apakah membaik atau memburuk."
         )
     else:
-        action = "Review standar kualitas produk ini bersama tim R&D dan Produksi."
+        action = "Pantau tren pass rate produk ini di bulan-bulan berikutnya."
 
     return {
         "status":     "ok",
@@ -463,20 +455,18 @@ def gen_insight_analyst_performance(perf: pd.DataFrame) -> dict:
             f"tingkat ketidaksesuaian relatif merata di antara semua analis."
         )
 
-    # Action
+    # Action — berbasis tim, bukan individu
     if len(flagged) > 0:
-        top_flagged = flagged.sort_values("Rate %", ascending=False).iloc[0]
         action = (
-            f"Prioritas pertama: **{top_flagged['Analis']}** — "
-            f"lakukan sesi feedback 1-on-1 berbasis heatmap drill-down di bawah. "
-            f"**{best['Analis']}** bisa dijadikan benchmark "
-            f"dan dilibatkan dalam sesi kalibrasi tim."
+            f"Adakan **sesi kalibrasi tim** — fokus pada penyesuaian persepsi "
+            f"antara analis dan Verifikator. "
+            f"Gunakan heatmap drill-down di bawah untuk melihat pola gap "
+            f"tiap analis dan jadikan bahan diskusi bersama, bukan evaluasi individu."
         )
     else:
         action = (
-            f"Tidak ada analis yang perlu perhatian khusus saat ini. "
-            f"Pertahankan dengan sesi kalibrasi rutin. "
-            f"**{best['Analis']}** adalah benchmark terbaik."
+            f"Tingkat ketidaksesuaian antar analis relatif merata — "
+            f"pertahankan dengan sesi kalibrasi rutin."
         )
 
     return {
@@ -561,20 +551,12 @@ def gen_insight_tendency(tend: pd.DataFrame, long_df: pd.DataFrame) -> dict:
             f"bias bervariasi antar analis, perlu ditangani per individu."
         )
 
-    # Action — tanpa referensi parameter spesifik (domain Tab Parameter)
-    if most_longgar and most_longgar_pct > avg_longgar + 10:
-        action = (
-            f"Prioritas: **{most_longgar}** — paling menonjol kecenderungan "
-            f"menilai lebih ringan dari yang lain. "
-            f"Lakukan sesi screening bertingkat untuk kalibrasi bersama seluruh tim — "
-            f"lihat Tab Parameter untuk parameter mana yang perlu difokuskan."
-        )
-    else:
-        action = (
-            f"Lakukan **sesi screening bertingkat** untuk kalibrasi tim — "
-            f"lihat Tab Parameter untuk parameter dengan gap rate tertinggi. "
-            f"Tujuan: selaraskan penilaian analis dengan standar Verifikator."
-        )
+    # Action — berbasis tim, tidak sebut nama individu
+    action = (
+        f"Lakukan **sesi screening bertingkat** untuk kalibrasi seluruh tim — "
+        f"gunakan heatmap drill-down di Tab ini untuk melihat pola tiap analis "
+        f"dan lihat Tab Parameter untuk parameter yang perlu difokuskan."
+    )
 
     confirm = (
         "Analisis ini hanya mencakup data sensory — temuan di atas adalah "
