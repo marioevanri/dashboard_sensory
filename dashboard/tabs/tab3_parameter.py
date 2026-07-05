@@ -244,22 +244,28 @@ def _render_gap_per_parameter(df: pd.DataFrame) -> None:
 
         with col_d1:
             st.caption(f"**Distribusi status** — {PARAM_LABELS[sel_param]}")
-            # KimFis vs Verifikator side by side
+            # KimFis vs Verifikator side by side — pakai persentase supaya apple-to-apple
+            kf_total = df[kc].notna().sum()
             kf_d = (df[kc].value_counts()
-                    .rename_axis("Status").reset_index(name="Jumlah"))
+                    .rename_axis("Status").reset_index(name="n"))
+            kf_d["Persen"] = (kf_d["n"] / kf_total * 100).round(1)
             kf_d["Sumber"] = "KimFis"
+
             if vc in df.columns:
+                vf_total = df[vc].dropna().shape[0]
                 vf_d = (df[vc].dropna().value_counts()
-                        .rename_axis("Status").reset_index(name="Jumlah"))
+                        .rename_axis("Status").reset_index(name="n"))
+                vf_d["Persen"] = (vf_d["n"] / vf_total * 100).round(1) if vf_total > 0 else 0
                 vf_d["Sumber"] = "Verifikator"
                 dist = pd.concat([kf_d, vf_d], ignore_index=True)
             else:
                 dist = kf_d
+
             dist = dist[dist["Status"].isin(STATUS_ORDER)]
             dist["Status"] = pd.Categorical(dist["Status"], STATUS_ORDER, ordered=True)
             fig3 = px.bar(
                 dist.sort_values("Status"),
-                x="Status", y="Jumlah", color="Sumber", barmode="group",
+                x="Status", y="Persen", color="Sumber", barmode="group",
                 color_discrete_map={"KimFis":"#185FA5","Verifikator":"#EF9F27"},
                 category_orders={"Status": STATUS_ORDER},
                 text_auto=True, template="plotly_white", height=280,
@@ -267,7 +273,7 @@ def _render_gap_per_parameter(df: pd.DataFrame) -> None:
             fig3.update_layout(
                 legend=dict(orientation="h", y=1.1),
                 margin=dict(t=20, b=10, l=10, r=10),
-                xaxis_title="", yaxis_title="Jumlah",
+                xaxis_title="", yaxis_title="% dari total masing-masing sumber",
             )
             st.plotly_chart(fig3, use_container_width=True)
 
@@ -275,13 +281,13 @@ def _render_gap_per_parameter(df: pd.DataFrame) -> None:
             st.caption(f"**Trend bulanan** — TP Rate {PARAM_LABELS[sel_param]}")
             dft = df.copy()
             dft["Month"] = pd.to_datetime(dft["Date"], errors="coerce").dt.to_period("M").astype(str)
-            if kc in dft.columns:
+            if vc in dft.columns:
                 trend = (
-                    dft[dft[kc].notna()]
+                    dft[dft[vc].notna()]
                     .groupby("Month")
                     .agg(
-                        Total=(kc, "count"),
-                        TP=(kc, lambda x: (x != "Pass").sum()),
+                        Total=(vc, "count"),
+                        TP=(vc, lambda x: (x != "Pass").sum()),
                     )
                     .reset_index()
                 )
