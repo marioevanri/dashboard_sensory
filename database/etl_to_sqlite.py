@@ -124,6 +124,52 @@ def build_clean_table(df):
         clean[col] = clean[col].apply(
             lambda x: None if str(x).strip().lower() in ("nan","none","") else x
         )
+
+    # Filter out baris dengan status "TP 1" atau "TP 2" tanpa arah (+/-)
+    # Ini terjadi kalau remark kosong sehingga arah tidak bisa di-infer
+    # Baris ini dianggap data tidak lengkap dan tidak dimasukkan ke DB
+    before = len(clean)
+    mask_invalid = (
+        clean["status_kimfis"].isin(["TP 1", "TP 2"]) |
+        clean["status_verif"].isin(["TP 1", "TP 2"])
+    )
+    invalid = clean[mask_invalid].copy()
+    clean   = clean[~mask_invalid].reset_index(drop=True)
+
+    if len(invalid) > 0:
+        print(f"  ⚠️  {len(invalid)} baris di-skip (status tanpa arah +/-):")
+        for _, row in invalid.iterrows():
+            print(f"     → {row['no_batch']} Mix {row['mix_ibc']} | "
+                  f"KF={row['status_kimfis']} | VF={row['status_verif']} | "
+                  f"{row['source_file']}")
+
+        # Simpan ke file log supaya bisa dicek kapanpun tanpa re-run ETL
+        log_path = _HERE / "data_quality_issues.txt"
+        import datetime as _dt
+        with open(log_path, "w", encoding="utf-8") as _f:
+            _f.write(f"DATA QUALITY ISSUES — ETL Log\n")
+            _f.write(f"Generated: {_dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            _f.write(f"="*60 + "\n\n")
+            _f.write(f"Total baris di-skip: {len(invalid)}\n")
+            _f.write(f"Alasan: status 'TP 1' atau 'TP 2' tanpa arah (+/-)\n")
+            _f.write(f"        Remark kosong atau tidak ada kata 'kurang'/'lebih'\n\n")
+            _f.write(f"Detail:\n")
+            for _, row in invalid.iterrows():
+                _f.write(
+                    f"  Batch: {row['no_batch']} | Mix: {row['mix_ibc']} | "
+                    f"Produk: {row['produk_grade']} | "
+                    f"Tgl: {row['tgl_analisa']} | "
+                    f"KF Status: {row['status_kimfis']} | "
+                    f"Verif Status: {row['status_verif']} | "
+                    f"File: {row['source_file']}\n"
+                )
+            _f.write(f"\nCara fix: buka file Excel sumber, cari batch tersebut,\n")
+            _f.write(f"tambahkan remark 'kurang' atau 'lebih' di kolom Remark,\n")
+            _f.write(f"lalu re-run etl_to_sqlite.py\n")
+        print(f"  📄 Log tersimpan: {log_path}")
+    else:
+        print(f"  ✅ Tidak ada baris dengan status tanpa arah — data lengkap")
+
     return clean
 
 
