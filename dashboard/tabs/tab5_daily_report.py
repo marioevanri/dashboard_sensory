@@ -129,7 +129,7 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
     import datetime as _dt
 
     # Shortcut "Verifikasi Hari Ini"
-    vd_all_dates = df_all["Verif_Date"].dropna()
+    vd_all_dates = df["Verif_Date"].dropna()
     latest_verif = vd_all_dates.max().date() if not vd_all_dates.empty else None
 
     sc1, sc2, sc3 = st.columns([1, 1, 2])
@@ -164,11 +164,11 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
     with dr2:
         if dr_prod != "Semua":
             batch_dr_pool = sorted(
-                df_all[df_all["Product_Name"] == dr_prod]["Batch_No"]
+                df[df["Product_Name"] == dr_prod]["Batch_No"]
                 .dropna().unique()
             )
         else:
-            batch_dr_pool = sorted(df_all["Batch_No"].dropna().unique())
+            batch_dr_pool = sorted(df["Batch_No"].dropna().unique())
 
         dr_batches = st.multiselect(
             "Pilih Batch No (opsional — kosongkan untuk lihat semua batch di tanggal)",
@@ -206,7 +206,7 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
     # Mode tanggal: tidak perlu pilih batch — langsung filter by verif date
     if dr_mode == "Filter per tanggal verifikasi" and dr_date_range and len(dr_date_range) == 2:
         vd1, vd2 = dr_date_range
-        rpt_date = df_all.copy()
+        rpt_date = df.copy()
         if dr_prod != "Semua":
             rpt_date = rpt_date[rpt_date["Product_Name"] == dr_prod]
         if dr_batches:
@@ -236,7 +236,7 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
             )
 
     elif dr_batches:
-        rpt_all = df_all.copy()
+        rpt_all = df.copy()
         if dr_prod != "Semua":
             rpt_all = rpt_all[rpt_all["Product_Name"] == dr_prod]
         rpt_all = rpt_all[rpt_all["Batch_No"].isin(dr_batches)]
@@ -264,16 +264,16 @@ def render(df: pd.DataFrame, df_all: pd.DataFrame, all_prods: list) -> None:
             if c in df.columns: return c
         return None
 
-    # Sumber: filter by batch kalau ada, fallback ke df_all
+    # Sumber: filter by batch kalau ada, fallback ke df (sudah kefilter sidebar)
     if dr_batches:
-        tbl_src = df_all[df_all["Batch_No"].isin(dr_batches)].copy()
+        tbl_src = df[df["Batch_No"].isin(dr_batches)].copy()
         st.caption(
             f"Menampilkan data untuk batch yang dipilih: "
             f"**{', '.join(dr_batches)}**  ·  "
             f"Hapus pilihan batch untuk lihat semua data."
         )
     else:
-        tbl_src = df_all.copy()
+        tbl_src = df.copy()
         st.caption(
             "Menampilkan semua data. Pilih batch di atas untuk filter lebih spesifik."
         )

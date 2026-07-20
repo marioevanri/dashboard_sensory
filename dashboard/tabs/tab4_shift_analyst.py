@@ -12,6 +12,7 @@ from config import STATUS_ORDER, STATUS_COLORS, STATUS_NUM, PARAM_COLS, PARAM_LA
 from insight_engine import (
     gen_insight_shift, gen_insight_analyst_performance,
     gen_insight_tendency, gen_insight_drilldown,
+    gen_insight_quality_by_dim,
     render_insight_box,
 )
 
@@ -79,10 +80,20 @@ def render(df: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Section 1: Gap Rate per Shift ────────────────────────────
+    # ── Section 1: Gap Rate per Shift (lensa PROSES) ─────────────
     st.subheader("Gap Rate per Shift")
     st.caption("Dari Tab Gap Analysis: ringkasan gap rate per shift. Detail investigasi ada di bawah.")
     _render_shift_summary(sh_df)
+
+    # ── Section 1b: Pass Rate per Shift (lensa OUTCOME) ──────────
+    st.subheader("Pass Rate per Shift")
+    st.caption(
+        "Beda dari chart di atas — ini bukan soal seberapa sering KimFis dan Verifikator "
+        "beda pendapat, tapi seberapa sering hasil sensory-nya sendiri (ground truth "
+        "Verifikator) Pass. Gap tinggi ≠ kualitas jelek, dan sebaliknya — dua chart ini "
+        "sengaja ditaruh bersebelahan biar bedanya kelihatan."
+    )
+    _render_shift_quality(df_verif)
 
     st.divider()
 
@@ -93,6 +104,15 @@ def render(df: pd.DataFrame) -> None:
         f"Minimum {MIN_ANALYST_SAMPLE} sampel untuk ditampilkan."
     )
     _render_analyst_performance(df_s)
+
+    # ── Section 2b: Pass Rate per Analis (lensa OUTCOME) ─────────
+    st.subheader("Pass Rate per Analis")
+    st.caption(
+        "Pass rate sampel yang ditangani tiap analis (by Verifikator). Analis dengan "
+        "pass rate rendah belum tentu analis yang \"salah menilai\" — bisa jadi memang "
+        "kebagian batch/produk yang secara kualitas lebih banyak TP."
+    )
+    _render_analyst_quality(df_s)
 
     st.divider()
 
@@ -164,6 +184,142 @@ def _render_shift_summary(sh_df: pd.DataFrame) -> None:
 
     # Insight box
     render_insight_box(gen_insight_shift(sh_df), context="shift")
+
+
+def _render_shift_quality(df_verif: pd.DataFrame) -> None:
+    """Bar chart pass rate (Verifikator, ground truth) per shift — lensa OUTCOME."""
+    if df_verif.empty or "Verif_Status" not in df_verif.columns:
+        st.info("Data shift tidak tersedia.")
+        return
+
+    q_df = (
+        df_verif.groupby("Shift_Label")
+        .agg(Total=("Verif_Status", "count"),
+             Pass=("Verif_Status", lambda x: (x == "Pass").sum()))
+        .reset_index()
+    )
+    if q_df.empty:
+        st.info("Data shift tidak tersedia.")
+        return
+
+    q_df["Pass Rate %"] = (q_df["Pass"] / q_df["Total"] * 100).round(1)
+    q_df["Shift_Label"] = pd.Categorical(q_df["Shift_Label"], SHIFT_ORDER_LIST, ordered=True)
+    q_df = q_df.sort_values("Shift_Label")
+    q_df["BarText"] = q_df.apply(
+        lambda r: f"{r['Pass Rate %']}%  ({int(r['Pass'])} Pass dari {int(r['Total'])})", axis=1
+    )
+
+    min_rate = q_df["Pass Rate %"].min()
+    q_df["Color"] = q_df["Pass Rate %"].apply(
+        lambda x: "#D32F2F" if x == min_rate else "#185FA5"
+    )
+
+    fig = go.Figure()
+    for _, row in q_df.iterrows():
+        fig.add_trace(go.Bar(
+            x=[row["Pass Rate %"]], y=[row["Shift_Label"]],
+            orientation="h",
+            text=[row["BarText"]],
+            textposition="inside",
+            insidetextanchor="middle",
+            marker_color=row["Color"],
+            showlegend=False,
+        ))
+    fig.update_layout(
+        template="plotly_white", height=220,
+        margin=dict(t=10, b=10, l=10, r=20),
+        xaxis=dict(title="Pass Rate (%)", range=[0, 100]),
+        yaxis=dict(title="Shift"),
+        barmode="stack",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    worst = q_df.loc[q_df["Pass Rate %"].idxmin()]
+    best  = q_df.loc[q_df["Pass Rate %"].idxmax()]
+    st.caption(
+        f"🔴 Shift **{worst['Shift_Label']}** pass rate terendah: {worst['Pass Rate %']}% "
+        f"({int(worst['Pass'])} Pass dari {int(worst['Total'])} sampel terverifikasi). &nbsp;&nbsp;"
+        f"🟢 Shift **{best['Shift_Label']}** pass rate tertinggi: {best['Pass Rate %']}%."
+    )
+
+    q_df_i = q_df[["Shift_Label", "Pass Rate %", "Pass", "Total"]].rename(columns={"Shift_Label": "Label"})
+    render_insight_box(gen_insight_quality_by_dim(q_df_i, "shift"), context="shift_quality")
+
+
+def _render_analyst_quality(df_s: pd.DataFrame) -> None:
+    """Bar chart pass rate (Verifikator, ground truth) per analis — lensa OUTCOME."""
+    records = []
+    df_verif = df_s[df_s["Comparison"].isin(["MATCH", "MISMATCH"])].copy()
+
+    for no in [1, 2, 3]:
+        name_col = f"A{no}_Name"
+        if name_col not in df_verif.columns: continue
+        sub = df_verif[[name_col, "Verif_Status"]].dropna(subset=[name_col])
+        sub = sub[sub[name_col].astype(str).str.strip().str.lower() != "nan"]
+        sub = sub.rename(columns={name_col: "Analis"})
+        records.append(sub)
+
+    if not records:
+        st.info("Data analis tidak tersedia.")
+        return
+
+    long_df = pd.concat(records, ignore_index=True)
+    long_df["Analis"] = long_df["Analis"].str.strip().str.title()
+
+    q = (
+        long_df.groupby("Analis")
+        .agg(Total=("Verif_Status", "count"),
+             Pass=("Verif_Status", lambda x: (x == "Pass").sum()))
+        .reset_index()
+    )
+    q["Pass Rate %"] = (q["Pass"] / q["Total"] * 100).round(1)
+    q = q[q["Total"] >= MIN_ANALYST_SAMPLE]
+    if q.empty:
+        st.info(f"Belum ada analis dengan ≥{MIN_ANALYST_SAMPLE} sampel terverifikasi.")
+        return
+
+    q = q.sort_values("Pass Rate %")
+    q["BarText"] = q.apply(
+        lambda r: f"{r['Pass Rate %']}%  |  {int(r['Pass'])} dari {int(r['Total'])}", axis=1
+    )
+
+    # Gradient warna — kebalikan dari chart gap: rate RENDAH = merah (perlu perhatian)
+    max_r = q["Pass Rate %"].max()
+    min_r = q["Pass Rate %"].min()
+
+    fig = go.Figure()
+    for _, row in q.iterrows():
+        norm = (max_r - row["Pass Rate %"]) / (max_r - min_r + 0.001)
+        r = int(211 * norm + 24 * (1 - norm))
+        g = int(47  * norm + 95 * (1 - norm))
+        b = int(47  * norm + 165 * (1 - norm))
+        color = f"rgb({r},{g},{b})"
+        fig.add_trace(go.Bar(
+            x=[row["Pass Rate %"]], y=[row["Analis"]],
+            orientation="h",
+            text=[row["BarText"]],
+            textposition="inside",
+            insidetextanchor="middle",
+            marker_color=color,
+            showlegend=False,
+        ))
+    fig.update_layout(
+        template="plotly_white",
+        height=max(300, len(q) * 32),
+        margin=dict(t=10, b=10, l=10, r=20),
+        xaxis=dict(title="Pass Rate (%)", range=[0, 100]),
+        yaxis=dict(title="Analis", autorange="reversed"),
+        barmode="stack",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.caption(
+        "* Analis dengan sampel sedikit hasilnya kurang stabil — "
+        "interpretasikan dengan hati-hati."
+    )
+
+    q_i = q[["Analis", "Pass Rate %", "Pass", "Total"]].rename(columns={"Analis": "Label"})
+    render_insight_box(gen_insight_quality_by_dim(q_i, "analis"), context="analyst_quality")
 
 
 def _render_analyst_performance(df_s: pd.DataFrame) -> None:

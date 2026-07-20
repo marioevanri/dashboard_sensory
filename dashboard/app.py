@@ -24,6 +24,7 @@ from tabs.tab2_gap           import render as _render_tab2
 from tabs.tab3_parameter     import render as _render_tab3
 from tabs.tab4_shift_analyst import render as _render_tab4
 from tabs.tab5_daily_report  import render as _render_tab5
+from tabs.tab6_case_study    import render as _render_tab6
 
 # ── PAGE CONFIG ───────────────────────────────────────────────────
 st.set_page_config(
@@ -168,12 +169,13 @@ if sel_prods:
 df = df_all[mask].copy()
 
 # ── TABS ──────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Overview",
     "📈 Gap Analysis",
     "🔬 Parameter & Produk",
     "🏭 Shift & Analis",
     "📋 Daily Report",
+    "📌 Case Study",
 ])
 
 with tab1:
@@ -190,3 +192,6 @@ with tab4:
 
 with tab5:
     _render_tab5(df, df_all, all_prods)
+
+with tab6:
+    _render_tab6(df)

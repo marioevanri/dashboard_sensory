@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from config import STATUS_ORDER, STATUS_COLORS, STATUS_NUM
 from insight_engine import (
-    gen_insight_gap_type, gen_insight_trend,
+    gen_insight_gap_type, gen_insight_trend, gen_insight_gap_type_by_dim,
     render_insight_box,
 )
 
@@ -17,9 +17,12 @@ def classify_gap(kf: str, vf: str) -> str | None:
     Kategori:
         "Melibatkan TP 3"  — salah satu TP 3 (off-taste)
         "Beda Arah"        — keduanya signed, berlawanan tanda (TP 1- vs TP 1+)
-        "Gap Signifikan"   — Pass ke TP 2 apapun arahnya (lompat 2 level via Pass)
-                             atau TP 1 ke TP 2 berlawanan arah
-        "Beda Tingkatan"   — selisih 1 level, arah sama (Pass→TP1, TP1→TP2)
+        "Gap Signifikan"   — salah satu sisi TP 2, arah sama — baik lompat dari
+                             Pass (Pass↔TP2) maupun cuma dari TP1 (TP1↔TP2).
+                             TP 2 = titik business rule "wajib Triangle Test",
+                             jadi digabung ke sini walau selisihnya cuma 1 level.
+        "Beda Tingkatan"   — selisih 1 level, arah sama, TIDAK melibatkan TP 2
+                             (murni Pass↔TP1)
     Returns None jika match atau status tidak dikenal.
     """
     if kf not in STATUS_NUM or vf not in STATUS_NUM or kf == vf:
@@ -34,11 +37,15 @@ def classify_gap(kf: str, vf: str) -> str | None:
     if kf in signed and vf in signed and STATUS_NUM[kf] * STATUS_NUM[vf] < 0:
         return "Beda Arah"
 
-    # Gap Signifikan: Pass ke TP 2 apapun arahnya (delta = 2, lompati TP 1)
-    if (kf == "Pass" and vf in tp2) or (vf == "Pass" and kf in tp2):
+    # Gap Signifikan: salah satu sisi TP 2 (arah sama) — baik lompat dari Pass
+    # (Pass↔TP2) maupun cuma dari TP1 (TP1↔TP2 searah). TP 2 = business rule
+    # "wajib Triangle Test", jadi ini digabung jadi 1 kategori genting,
+    # bukan dianggap sama "ringan"-nya kayak Pass↔TP1.
+    if kf in tp2 or vf in tp2:
         return "Gap Signifikan"
 
-    # Beda Tingkatan: selisih 1 level (termasuk Pass→TP1, TP1→TP2 searah)
+    # Beda Tingkatan: selisih 1 level, arah sama, TIDAK melibatkan TP 2
+    # (murni Pass↔TP1)
     delta = abs(STATUS_NUM[kf] - STATUS_NUM[vf])
     if delta == 1:
         return "Beda Tingkatan"
@@ -61,8 +68,8 @@ CAT_COLORS = {
     "Melibatkan TP 3": "#D32F2F",
 }
 CAT_DESC = {
-    "Beda Tingkatan":  "Selisih 1 level, arah sama — Pass→TP 1, TP 1→TP 2",
-    "Gap Signifikan":  "Pass langsung ke TP 2 (lompati TP 1) atau selisih 2+ level",
+    "Beda Tingkatan":  "Selisih 1 level, arah sama, TIDAK melibatkan TP 2 — cuma Pass↔TP 1",
+    "Gap Signifikan":  "Melibatkan TP 2 (arah sama) — Pass↔TP 2 (lompat) maupun TP 1↔TP 2 — titik wajib Triangle Test",
     "Beda Arah":       "Berlawanan arah — satu kurang (-), satu lebih (+) — TP 1-→TP 1+",
     "Melibatkan TP 3": "Off-taste (TP 3) — Pass→TP 3, TP 1-→TP 3",
 }
@@ -116,6 +123,18 @@ def render(df: pd.DataFrame) -> None:
             "Angka = jumlah kejadian."
         )
         _render_heatmap(df)
+        _top_off_diag = (
+            df[df["Comparison"] == "MISMATCH"]
+            .groupby(["KF_Status", "Verif_Status"]).size()
+            .sort_values(ascending=False)
+        )
+        if not _top_off_diag.empty:
+            (_kf_top, _vf_top), _n_top = _top_off_diag.index[0], _top_off_diag.iloc[0]
+            st.caption(
+                f"💡 Sel gap terbanyak: KimFis **{_kf_top}** → Verifikator **{_vf_top}** "
+                f"({int(_n_top)} kejadian) — kombinasi ini paling layak jadi contoh "
+                f"konkret di sesi kalibrasi."
+            )
 
     st.divider()
 
@@ -136,11 +155,27 @@ def render(df: pd.DataFrame) -> None:
         st.subheader("Breakdown Gap per Produk")
         st.caption("Top 10 produk — tipe gap apa yang dominan.")
         _render_breakdown_produk(df_mm)
+        _top_prod = (
+            df_mm.groupby("Product_Name").size().sort_values(ascending=False)
+        )
+        if not _top_prod.empty:
+            _pn, _pv = _top_prod.index[0], _top_prod.iloc[0]
+            st.caption(
+                f"💡 **{_pn}** paling banyak gap ({int(_pv)} kejadian dari total "
+                f"{total_mm:,} gap) — cek Tab Parameter & Produk untuk lihat pola "
+                f"parameter penyebabnya."
+            )
 
     with col_d:
         st.subheader("Breakdown Gap per Shift")
         st.caption("Gap rate % per shift — shift mana yang paling tinggi gapnya.")
         _render_breakdown_shift(df_mm, df_verif)
+        st.markdown("")
+        st.caption("**Apakah CORAK gap-nya beda per shift?** (bukan cuma rate-nya)")
+        render_insight_box(
+            gen_insight_gap_type_by_dim(df_mm, "Shift_Code", "shift"),
+            context="gap_type_shift",
+        )
 
     st.divider()
 
@@ -163,16 +198,6 @@ def render(df: pd.DataFrame) -> None:
             "Setiap kejadian perlu ditelusuri apakah ada justifikasi atau catatan release."
         )
         _render_dangerous_gap(df)
-
-    st.divider()
-
-    # ── Section 6: Sankey (visual summary, collapsible) ──────────
-    with st.expander("🔀 Sankey — Aliran status KimFis → Verifikator"):
-        st.caption(
-            "Diagram aliran dari penilaian KimFis (kiri) ke Verifikator (kanan). "
-            "Hijau = match, merah = gap."
-        )
-        _render_sankey(df)
 
 
 # ── Sub-renderers ────────────────────────────────────────────────
@@ -555,41 +580,3 @@ def _render_dangerous_gap(df: pd.DataFrame) -> None:
         pp["% dari Total"] = (pp["Jumlah"] / total_danger * 100).round(1)
         pp.index = range(1, len(pp) + 1)
         st.dataframe(pp, use_container_width=True, hide_index=False, height=260)
-
-
-def _render_sankey(df: pd.DataFrame) -> None:
-    """Sankey diagram aliran status KimFis → Verifikator."""
-    sdf = (
-        df[df["Comparison"].isin(["MATCH", "MISMATCH"])]
-        .groupby(["KF_Status", "Verif_Status"]).size().reset_index(name="Jumlah")
-    )
-    kf_nodes  = [f"KF: {s}"    for s in STATUS_ORDER if s in sdf["KF_Status"].values]
-    vf_nodes  = [f"Verif: {s}" for s in STATUS_ORDER if s in sdf["Verif_Status"].values]
-    all_nodes = kf_nodes + vf_nodes
-    node_colors = [STATUS_COLORS.get(n.split(": ", 1)[1], "#aaa") for n in all_nodes]
-
-    src, tgt, val, lc = [], [], [], []
-    for _, r in sdf.iterrows():
-        s = f"KF: {r['KF_Status']}"
-        t = f"Verif: {r['Verif_Status']}"
-        if s in all_nodes and t in all_nodes:
-            src.append(all_nodes.index(s))
-            tgt.append(all_nodes.index(t))
-            val.append(r["Jumlah"])
-            lc.append("rgba(46,139,87,0.3)" if r["KF_Status"] == r["Verif_Status"]
-                       else "rgba(211,47,47,0.25)")
-
-    fig = go.Figure(go.Sankey(
-        arrangement="snap",
-        node=dict(
-            pad=20, thickness=25,
-            line=dict(color="white", width=0.5),
-            label=all_nodes, color=node_colors,
-        ),
-        link=dict(source=src, target=tgt, value=val, color=lc),
-    ))
-    fig.update_layout(
-        height=420, margin=dict(t=10, b=10, l=20, r=20),
-        template="plotly_white",
-    )
-    st.plotly_chart(fig, use_container_width=True)

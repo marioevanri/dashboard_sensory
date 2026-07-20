@@ -387,14 +387,20 @@ def render(df: pd.DataFrame) -> None:
         st.subheader("Distribusi Status")
         st.caption(
             "Verifikator = ground truth (penilaian akhir yang dijadikan acuan). "
-            "KimFis = konsensus 3 analis. "
-            "Jumlah berbeda karena tidak semua sampel diverifikasi."
+            "KimFis = konsensus 3 analis. Ditampilkan sebagai % dari total "
+            "masing-masing sumber — karena jumlah sampel yang dinilai KimFis "
+            "dan yang diverifikasi berbeda (tidak semua sampel diverifikasi)."
         )
+        kf_total = df["KF_Status"].notna().sum()
         kf_dist = (df["KF_Status"].value_counts()
                    .rename_axis("Status").reset_index(name="Jumlah"))
+        kf_dist["Persen"] = (kf_dist["Jumlah"] / kf_total * 100).round(1) if kf_total > 0 else 0
         kf_dist["Sumber"] = "KimFis"
+
+        vf_total = df["Verif_Status"].dropna().shape[0]
         vf_dist = (df["Verif_Status"].dropna().value_counts()
                    .rename_axis("Status").reset_index(name="Jumlah"))
+        vf_dist["Persen"] = (vf_dist["Jumlah"] / vf_total * 100).round(1) if vf_total > 0 else 0
         vf_dist["Sumber"] = "Verifikator"
 
         dist_df = pd.concat([kf_dist, vf_dist], ignore_index=True)
@@ -402,17 +408,20 @@ def render(df: pd.DataFrame) -> None:
         dist_df["Status"] = pd.Categorical(
             dist_df["Status"], STATUS_ORDER, ordered=True
         )
+        dist_df["Label"] = dist_df.apply(
+            lambda r: f"{r['Persen']}% ({int(r['Jumlah'])})", axis=1
+        )
         fig = px.bar(
             dist_df.sort_values("Status"),
-            x="Status", y="Jumlah", color="Sumber", barmode="group",
+            x="Status", y="Persen", color="Sumber", barmode="group",
             color_discrete_map={"KimFis":"#185FA5","Verifikator":"#EF9F27"},
             category_orders={"Status": STATUS_ORDER},
-            text_auto=True, template="plotly_white", height=380,
+            text="Label", template="plotly_white", height=380,
         )
         fig.update_layout(
             legend=dict(orientation="h", y=1.1),
             margin=dict(t=30, b=20, l=10, r=10),
-            xaxis_title="", yaxis_title="Jumlah Sampel",
+            xaxis_title="", yaxis_title="% dari total masing-masing sumber",
         )
         st.plotly_chart(fig, use_container_width=True)
 

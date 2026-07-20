@@ -92,8 +92,9 @@ Tab 5: Action per batch?      → Detail harian, export data, keputusan release
 - Heatmap KimFis × Verifikator (warna = jarak gap)
 - Trend gap **rate %** bulanan (bukan volume) + metric bulan terburuk/terbaik
 - Breakdown per produk (composite stacked) + per shift (summary)
+- **Apakah CORAK gap beda per shift?** — chi-square test of independence (bukan cuma rate-nya yang dicek, tapi pola jenis gap-nya) dengan fallback otomatis ke kategori yang lebih sederhana kalau data per kategori terlalu tipis untuk diuji valid
 - 🚨 Gap Berbahaya: melibatkan TP 3, melibatkan TP 2, atau Beda Arah TP 1
-- Sankey diagram aliran status (expander)
+- ~~Sankey diagram aliran status~~ (dihapus — redundant dengan Heatmap, insight-nya sama persis)
 
 ### Tab 3 — 🔬 Parameter & Kualitas Produk
 **Subtab A — Gap per Parameter (untuk QC):**
@@ -107,16 +108,37 @@ Tab 5: Action per batch?      → Detail harian, export data, keputusan release
 - Top 10 produk (3 mode: TP Rate / Jumlah Absolut / Composite)
 - Pass Rate terendah — produk prioritas evaluasi
 - Drill-down per produk: insight otomatis (deteksi all-TP1) + distribusi status Verif + trend Pass Rate + tabel parameter penyebab TP dari Verifikator dengan arah dominan
+- Rekomendasi otomatis diframe sebagai "layak diserahkan ke Produksi/R&D" — bukan diagnosis akar penyebab produksi, sesuai disiplin scope QC
 
 ### Tab 4 — 🏭 Shift & Performa Analis
-- Gap rate per shift (1 chart bersih, merah = tertinggi)
+- Gap rate per shift (1 chart bersih, merah = tertinggi) — lensa PROSES
+- **Pass Rate per shift (by Verifikator)** — lensa OUTCOME, ditaruh bersebelahan dengan gap rate biar beda maknanya kelihatan jelas (gap tinggi ≠ kualitas jelek)
 - Performa analis: mismatch rate, gradient warna, min 20 sampel
+- **Pass Rate per analis (by Verifikator)** — sama, lensa outcome di samping lensa proses
 - Kecenderungan bias: Match / Terlalu Longgar / Terlalu Ketat
   - Terlalu Longgar = analis nilai lebih baik dari Verif → ⚠️ lebih berisiko
   - Insight otomatis: individu terbaik/terburuk + pola dominan seluruh tim
 - Alert TP 3 gap di heatmap drill-down per analis
+- **Semua perbandingan lintas-grup (shift, analis) pakai omnibus test dulu** sebelum drill-down ke pasangan spesifik — lihat bagian Metodologi Statistik di bawah
+
+## Metodologi Statistik
+
+Setiap insight yang membandingkan banyak kelompok (shift, analis) melewati 2 tahap, bukan langsung nyari pasangan paling ekstrem lalu diuji:
+
+1. **Omnibus test (chi-square)** — cek dulu apakah ADA beda di antara SEMUA kelompok sekaligus. Kalau tidak signifikan, berhenti di sini — tidak lanjut ke drill-down.
+2. **Drill-down dengan koreksi Bonferroni** — kalau omnibus signifikan, baru boleh cari pasangan paling ekstrem, diuji pakai threshold yang sudah dikoreksi (`0.05 / jumlah pasangan`), bukan 0.05 polos.
+
+Ini mencegah *multiple comparison problem* — nyari pasangan paling ekstrem dari banyak kelompok dulu, baru diuji, secara sistematis melebih-lebihkan seberapa "signifikan" temuannya kelihatan. Implementasi chi-square (termasuk konversi ke p-value pakai regularized incomplete gamma function) ditulis manual di `insight_engine.py`, tanpa dependency `scipy`, konsisten dengan pendekatan z-test yang sudah ada.
+
+**Prinsip bahasa:** p-value, z-score, chi-square, dan istilah statistik lain dihitung penuh di balik layar, tapi tidak pernah ditampilkan mentah ke pengguna dashboard — semua diterjemahkan ke bahasa biasa ("cukup konsisten, bukan sekadar variasi harian biasa" / "masih tergolong wajar").
+
 
 ### Tab 5 — 📋 Daily Report
+
+### Tab 6 — 📌 Case Study
+- Satu produk (default LAUTAN KRIMER LK 32 AB), ditelusuri end-to-end: Latar Belakang → Temuan Data → Root Cause → Rekomendasi → Dampak yang Diharapkan
+- Selectbox untuk ganti produk case study (minimal 20 sampel terverifikasi)
+- Dipakai sebagai showcase utuh untuk submission Kaizen / portofolio
 - Shortcut "📅 Verifikasi Terbaru" — filter otomatis ke tanggal verifikasi terbaru
 - KPI mini: Pass · TP 1 · TP 2 · TP 3 + warning otomatis kalau ada Not Pass
   (TP 2 = blok sementara tunggu Triangle Test · TP 3 = blok segera)

@@ -14,9 +14,159 @@ Prinsip:
 
 import pandas as pd
 import numpy as np
+import math
 
 
 MIN_N = 20  # minimum sampel untuk insight reliable
+
+CONFOUNDING_NOTE = (
+    "Perbandingan ini belum memperhitungkan bahwa tiap kelompok bisa memproses "
+    "produk yang berbeda-beda, jadi selisihnya belum tentu murni disebabkan oleh "
+    "faktor ini sendiri."
+)
+
+
+def _ztest_pvalue(p1: float, n1: int, p2: float, n2: int):
+    """
+    Two-proportion z-test. p1/p2 dalam desimal (0-1), n1/n2 jumlah sampel.
+    Return p-value, atau None kalau salah satu n=0.
+    """
+    if n1 == 0 or n2 == 0:
+        return None
+    pooled = (p1 * n1 + p2 * n2) / (n1 + n2)
+    if pooled <= 0 or pooled >= 1:
+        return 1.0
+    se = math.sqrt(pooled * (1 - pooled) * (1 / n1 + 1 / n2))
+    if se == 0:
+        return 1.0
+    z = (p1 - p2) / se
+    return 2 * (1 - 0.5 * (1 + math.erf(abs(z) / math.sqrt(2))))
+
+
+def _gammaq(s: float, x: float):
+    """
+    Regularized upper incomplete gamma Q(s,x) — dipakai buat hitung p-value
+    chi-square tanpa scipy. Implementasi standar (series + continued fraction).
+    """
+    if x < 0 or s <= 0:
+        return None
+    if x == 0:
+        return 1.0
+    if x < s + 1:
+        # Series expansion — valid buat x < s+1
+        term = 1.0 / s
+        total = term
+        n = s
+        for _ in range(300):
+            n += 1
+            term *= x / n
+            total += term
+            if abs(term) < abs(total) * 1e-14:
+                break
+        return 1.0 - total * math.exp(-x + s * math.log(x) - math.lgamma(s))
+    else:
+        # Continued fraction — valid buat x >= s+1
+        tiny = 1e-300
+        b = x + 1 - s
+        c = 1 / tiny
+        d = 1 / b
+        h = d
+        for i in range(1, 300):
+            an = -i * (i - s)
+            b += 2
+            d = an * d + b
+            if abs(d) < tiny:
+                d = tiny
+            c = b + an / c
+            if abs(c) < tiny:
+                c = tiny
+            d = 1 / d
+            delta = d * c
+            h *= delta
+            if abs(delta - 1) < 1e-14:
+                break
+        return math.exp(-x + s * math.log(x) - math.lgamma(s)) * h
+
+
+def _chi2_pvalue(chi2_stat: float, dof: int):
+    """P-value dari statistik chi-square dengan derajat kebebasan dof."""
+    if chi2_stat < 0 or dof <= 0:
+        return None
+    return _gammaq(dof / 2.0, chi2_stat / 2.0)
+
+
+def _chi2_contingency(table: list) -> dict:
+    """
+    Chi-square test of independence — cek apakah 2 variabel kategori
+    (misal: jenis gap x shift) SALING BERHUBUNGAN, atau independen
+    (polanya sama aja di semua kelompok).
+
+    table: list of list, baris = grup (misal shift), kolom = kategori
+    (misal jenis gap). Beda dari _chi2_omnibus yang khusus 2 kolom
+    (event/non-event) — ini general buat berapapun jumlah kolom.
+
+    Return dict: chi2, dof, p_value, valid (False kalau ada expected
+    frequency < 5 di terlalu banyak sel — chi-square jadi kurang akurat).
+    """
+    import numpy as np
+    arr = np.array(table, dtype=float)
+    if arr.shape[0] < 2 or arr.shape[1] < 2:
+        return {"chi2": None, "dof": None, "p_value": None, "valid": False}
+
+    row_sums = arr.sum(axis=1, keepdims=True)
+    col_sums = arr.sum(axis=0, keepdims=True)
+    total = arr.sum()
+    if total == 0:
+        return {"chi2": None, "dof": None, "p_value": None, "valid": False}
+
+    expected = row_sums @ col_sums / total
+    # Guard: chi-square kurang valid kalau banyak sel expected-nya < 5
+    # (aturan baku Cochran) — daripada hasil menyesatkan, tandai invalid.
+    low_cells = (expected < 5).sum()
+    valid = low_cells <= 0.2 * expected.size  # toleransi maks 20% sel
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        chi2_stat = np.where(expected > 0, (arr - expected) ** 2 / expected, 0).sum()
+    dof = (arr.shape[0] - 1) * (arr.shape[1] - 1)
+    p_value = _chi2_pvalue(chi2_stat, dof)
+
+    return {"chi2": round(chi2_stat, 2), "dof": dof, "p_value": p_value, "valid": valid}
+
+
+def _chi2_omnibus(groups: list) -> dict:
+    """
+    Chi-square test of homogeneity — cek apakah ADA beda di antara SEMUA
+    grup sekaligus (omnibus test), SEBELUM drill-down cari pasangan
+    ekstrem. Ini yang mencegah "nyari-nyari pasangan paling beda dari
+    banyak grup, baru dites" (multiple comparison problem).
+
+    groups: list of (n_event, n_total) — misal [(gap, total), ...] per shift.
+    Return dict: chi2, dof, p_value.
+    """
+    k = len(groups)
+    if k < 2:
+        return {"chi2": None, "dof": None, "p_value": None}
+
+    total_event = sum(g[0] for g in groups)
+    total_n     = sum(g[1] for g in groups)
+    if total_n == 0:
+        return {"chi2": None, "dof": None, "p_value": None}
+    overall_rate = total_event / total_n
+
+    chi2_stat = 0.0
+    for n_event, n_total in groups:
+        if n_total == 0:
+            continue
+        for observed, expected in [
+            (n_event, n_total * overall_rate),
+            (n_total - n_event, n_total * (1 - overall_rate)),
+        ]:
+            if expected > 0:
+                chi2_stat += (observed - expected) ** 2 / expected
+
+    dof = k - 1
+    p_value = _chi2_pvalue(chi2_stat, dof)
+    return {"chi2": round(chi2_stat, 2), "dof": dof, "p_value": p_value}
 
 
 def _severity(status: str) -> int:
@@ -67,11 +217,20 @@ def gen_insight_gap_type(df_mm: pd.DataFrame, total_mm: int) -> dict:
     # Layer 2: inference — hanya kalau dominan > 60%
     inference = None
     if top_pct >= 60:
-        if top_cat in ("Beda Tingkatan", "Gap Signifikan"):
+        if top_cat == "Beda Tingkatan":
             inference = (
                 f"{top_pct}% gap adalah **Beda Tingkatan** — "
-                f"arah penilaian sama (kurang/lebih), tapi berbeda di levelnya. "
-                f"Contoh: KimFis TP 1-, Verifikator TP 2-."
+                f"arah penilaian sama (kurang/lebih), cuma beda 1 level, dan "
+                f"TIDAK melibatkan TP 2 (murni Pass↔TP1). Ini pola paling ringan, "
+                f"masih dalam batas wajar kalibrasi."
+            )
+        elif top_cat == "Gap Signifikan":
+            inference = (
+                f"{top_pct}% gap adalah **Gap Signifikan** — melibatkan TP 2 "
+                f"(baik lompat dari Pass, atau cuma dari TP 1 ke TP 2). TP 2 "
+                f"adalah titik di mana business rule mewajibkan Triangle Test, "
+                f"jadi gap di sini lebih genting dibanding Beda Tingkatan "
+                f"walau kadang cuma beda 1 level secara angka."
             )
         elif top_cat == "Beda Arah":
             inference = (
@@ -98,6 +257,12 @@ def gen_insight_gap_type(df_mm: pd.DataFrame, total_mm: int) -> dict:
         "Beda Tingkatan": (
             "Prioritaskan **screening (training) bertingkat** untuk kalibrasi sensorik analis — sesi deteksi intensitas per parameter (Creamy bertingkat, Milky bertingkat, dst.)."
         ),
+        "Gap Signifikan": (
+            "**Tinjau ulang kalibrasi di sekitar batas TP 2** — karena gap di sini "
+            "berarti salah satu pihak (KimFis atau Verifikator) berada di ambang "
+            "keputusan Triangle Test sementara pihak lain menilai jauh lebih ringan. "
+            "Cek batch spesifik di Tab Daily Report sebelum ambil keputusan blok."
+        ),
         "Beda Arah": (
             "Lakukan **screening (training) persepsi dasar** — "
             "sesi kalibrasi khusus untuk menyamakan pemahaman "
@@ -110,7 +275,7 @@ def gen_insight_gap_type(df_mm: pd.DataFrame, total_mm: int) -> dict:
             "untuk justifikasi sebelum keputusan blok."
         ),
     }
-    action = action_map.get(top_cat, action_map.get("Beda Tingkatan", "Tinjau distribusi tipe gap dan diskusikan dengan tim QC."))
+    action = action_map.get(top_cat, "Tinjau distribusi tipe gap dan diskusikan dengan tim QC.")
 
     # Konfirmasi yang dibutuhkan
     confirm = (
@@ -124,6 +289,98 @@ def gen_insight_gap_type(df_mm: pd.DataFrame, total_mm: int) -> dict:
         "action":     action,
         "confirm":    confirm,
         "tp3_alert":  tp3_n > 0 and tp3_pct >= 5,
+    }
+
+
+def gen_insight_gap_type_by_dim(df_mm: pd.DataFrame, dim_col: str, dim_label: str) -> dict:
+    """
+    Chi-square test of independence — apakah JENIS gap (Beda Tingkatan/Beda
+    Arah/Gap Signifikan/Melibatkan TP 3) polanya beda-beda tergantung dimensi
+    tertentu (shift/analis/dll), atau independen (pola sebarannya sama rata
+    di semua dimensi).
+
+    Beda dari gen_insight_shift/gen_insight_quality_by_dim (yang nanya
+    "apakah RATE-nya beda"), ini nanya "apakah CORAK/TIPE gap-nya beda".
+
+    df_mm: DataFrame baris MISMATCH — harus punya kolom KF_Status,
+    Verif_Status, dan dim_col (misal 'Shift_Label').
+    dim_label: nama dimensi untuk teks, misal "shift".
+    """
+    from tabs.tab2_gap import classify_gap
+
+    df_mm = df_mm.copy()
+    df_mm["Kategori"] = df_mm.apply(
+        lambda r: classify_gap(r["KF_Status"], r["Verif_Status"]), axis=1
+    )
+
+    # Coba dulu pakai 4 kategori penuh; kalau selnya terlalu tipis
+    # (expected < 5 di >20% sel), turun ke versi 2-kategori yang lebih kasar
+    # tapi valid secara statistik.
+    table_full = pd.crosstab(df_mm[dim_col], df_mm["Kategori"])
+    table_full = table_full.loc[table_full.sum(axis=1) >= MIN_N]
+
+    result, used_simplified, table_used = {"valid": False}, False, table_full
+    if table_full.shape[0] >= 2 and table_full.shape[1] >= 2:
+        result = _chi2_contingency(table_full.values.tolist())
+
+    if not result.get("valid", False):
+        df_mm["Kategori2"] = df_mm["Kategori"].apply(
+            lambda k: "Beda Tingkatan" if k == "Beda Tingkatan" else "Perlu Perhatian"
+        )
+        table2 = pd.crosstab(df_mm[dim_col], df_mm["Kategori2"])
+        table2 = table2.loc[table2.sum(axis=1) >= MIN_N]
+        if table2.shape[0] < 2 or table2.shape[1] < 2:
+            return {"status": "insufficient",
+                    "msg": f"Data terlalu sedikit untuk uji pola jenis gap per {dim_label}."}
+        result = _chi2_contingency(table2.values.tolist())
+        used_simplified, table_used = True, table2
+
+    if not result.get("valid", False) or result.get("p_value") is None:
+        return {"status": "insufficient",
+                "msg": f"Data terlalu tersebar untuk uji chi-square yang valid per {dim_label} "
+                       f"(banyak sel dengan sampel < 5)."}
+
+    p_value = result["p_value"]
+    kategori_note = (
+        "disederhanakan jadi 2 kategori — Beda Tingkatan vs Perlu Perhatian — "
+        "karena kategori aslinya terlalu tipis untuk diuji langsung"
+        if used_simplified else "4 kategori penuh"
+    )
+
+    observable = (
+        f"Diuji pola jenis gap ({kategori_note}) di {table_used.shape[0]} {dim_label} sekaligus."
+    )
+
+    if p_value >= 0.05:
+        inference = (
+            f"Belum cukup bukti pola jenis gap berhubungan dengan {dim_label} — proporsi "
+            f"tiap jenis gap relatif konsisten di semua {dim_label}, bukan terkonsentrasi "
+            f"di salah satu {dim_label} tertentu."
+        )
+        action = (
+            f"Tidak ada indikasi {dim_label} tertentu punya corak gap yang beda — "
+            f"penanganan gap tidak perlu dibedakan per {dim_label}."
+        )
+    else:
+        inference = (
+            f"Ada hubungan nyata antara jenis gap dan {dim_label} — proporsi jenis gap "
+            f"TIDAK merata, ada {dim_label} tertentu yang corak gap-nya beda dari yang lain."
+        )
+        action = (
+            f"Cek tabel detail untuk lihat {dim_label} mana yang polanya paling menonjol, "
+            f"dan jenis gap apa yang lebih sering muncul di situ — itu petunjuk awal, "
+            f"perlu ditelusuri lebih lanjut sebelum disimpulkan penyebabnya."
+        )
+
+    return {
+        "status": "ok",
+        "observable": observable,
+        "inference": inference,
+        "action": action,
+        "confirm": (
+            "Analisis ini hanya mencakup data sensory — temuan di atas adalah batas lingkup "
+            "yang bisa kami olah dari data evaluasi sensory. " + CONFOUNDING_NOTE
+        ),
     }
 
 
@@ -176,14 +433,21 @@ def gen_insight_trend(monthly: pd.DataFrame) -> dict:
 
     action = None
     if trend_direction == "memburuk":
+        bridge = (
+            "Meski pola keseluruhan tergolong stabil, " if cv <= 0.2 else ""
+        )
         action = (
-            f"Bulan terakhir ({monthly.iloc[-1]['Month']}) gap rate {last_rate}% — "
+            f"{bridge}Bulan terakhir ({monthly.iloc[-1]['Month']}) gap rate {last_rate}% — "
             f"**lebih tinggi dari bulan sebelumnya** ({prev_rate}%). "
-            f"Perlu investigasi segera: ada perubahan komposisi analis, produk, atau proses?"
+            f"Perlu dipantau apakah ini awal tren naik atau sekadar variasi bulanan biasa: "
+            f"cek perubahan komposisi analis, produk, atau proses di bulan ini."
         )
     elif trend_direction == "membaik":
+        bridge = (
+            "Melanjutkan pola keseluruhan yang sudah stabil, " if cv <= 0.2 else ""
+        )
         action = (
-            f"Bulan terakhir ({monthly.iloc[-1]['Month']}) gap rate {last_rate}% — "
+            f"{bridge}Bulan terakhir ({monthly.iloc[-1]['Month']}) gap rate {last_rate}% — "
             f"**membaik dari bulan sebelumnya** ({prev_rate}%). "
             f"Identifikasi apa yang berubah dan pertahankan kondisi tersebut."
         )
@@ -324,8 +588,8 @@ def gen_insight_product(prod_name: str, tp_rate: float, pass_rate: float,
     if tp_rate >= 50 and top_param:
         action = (
             f"Produk ini konsisten banyak TP di parameter **{top_param}** — "
-            f"ini sinyal kualitas produk yang perlu perhatian lebih, "
-            f"bukan masalah kalibrasi analis."
+            f"ini sinyal kualitas produk (bukan masalah kalibrasi analis), layak "
+            f"diserahkan ke Produksi/R&D sebagai bukti untuk investigasi lebih lanjut."
         )
     elif top_param:
         action = (
@@ -347,10 +611,97 @@ def gen_insight_product(prod_name: str, tp_rate: float, pass_rate: float,
 # TAB 4 — Shift & Analis Insight
 # ══════════════════════════════════════════════════════════════════
 
+def gen_insight_quality_by_dim(q_df: pd.DataFrame, dim_label: str) -> dict:
+    """
+    Generate insight dari PASS RATE (ground truth Verifikator) per dimensi
+    (shift / analis / plant / dll) — lensa OUTCOME, beda dari gen_insight_shift
+    yang lensa PROSES (gap KimFis vs Verifikator). Insight ini SENGAJA dipisah
+    dari insight gap — jangan digabung jadi satu narasi.
+    q_df: kolom [Label, "Pass Rate %", "Pass", "Total"]
+    dim_label: nama dimensi untuk teks, misal "shift", "analis"
+
+    Sama seperti gen_insight_shift — omnibus test dulu (semua grup sekaligus),
+    baru drill-down ke pasangan ekstrem kalau omnibus-nya signifikan.
+    """
+    valid = q_df[q_df["Total"] >= MIN_N]
+    if valid.empty:
+        return {"status": "insufficient", "msg": f"Data {dim_label} terlalu sedikit (minimum n={MIN_N})."}
+
+    worst  = valid.loc[valid["Pass Rate %"].idxmin()]
+    best   = valid.loc[valid["Pass Rate %"].idxmax()]
+    mean_r = valid["Pass Rate %"].mean()
+
+    observable = (
+        f"{dim_label.capitalize()} **{worst['Label']}** pass rate terendah: "
+        f"**{worst['Pass Rate %']}%** ({int(worst['Pass'])} Pass dari {int(worst['Total'])} sampel terverifikasi). "
+        f"{dim_label.capitalize()} **{best['Label']}** tertinggi: {best['Pass Rate %']}%. "
+        f"Rata-rata antar {dim_label}: {mean_r:.1f}%."
+    )
+
+    groups = [(int(r["Pass"]), int(r["Total"])) for _, r in valid.iterrows()]
+    omnibus = _chi2_omnibus(groups)
+    k = len(groups)
+    n_pairs = k * (k - 1) // 2
+    spread = best["Pass Rate %"] - worst["Pass Rate %"]
+
+    if omnibus["p_value"] is None or omnibus["p_value"] >= 0.05:
+        inference = (
+            f"Diuji ke SEMUA {k} {dim_label} sekaligus (bukan cuma yang kelihatan "
+            f"paling beda) — belum cukup bukti ada perbedaan nyata. Selisih pass rate "
+            f"(**{spread:.1f}%**) kemungkinan besar variasi wajar antar {dim_label}."
+        )
+        action = (
+            f"Pass rate antar {dim_label} tidak berbeda signifikan secara keseluruhan — "
+            f"belum perlu ditelusuri sebagai masalah spesifik per {dim_label}."
+        )
+    else:
+        alpha_corrected = 0.05 / n_pairs if n_pairs > 0 else 0.05
+        pval = _ztest_pvalue(worst["Pass Rate %"] / 100, worst["Total"],
+                              best["Pass Rate %"] / 100, best["Total"])
+        if pval is not None and pval < alpha_corrected:
+            inference = (
+                f"Diuji ke semua {k} {dim_label} sekaligus — ADA perbedaan nyata. "
+                f"{dim_label.capitalize()} {worst['Label']} vs {best['Label']} adalah "
+                f"pasangan paling mencolok (selisih {spread:.1f}%), dan ini tetap "
+                f"konsisten meski sudah mempertimbangkan banyaknya pasangan yang "
+                f"dibandingkan. Ini soal kualitas hasil sensory-nya sendiri, jadi "
+                f"datanya layak diserahkan ke Produksi/R&D."
+            )
+        else:
+            inference = (
+                f"Diuji ke semua {k} {dim_label} sekaligus — ADA perbedaan nyata di "
+                f"antaranya, tapi pasangan {worst['Label']} vs {best['Label']} secara "
+                f"spesifik belum cukup kuat untuk disebut yang paling beda."
+            )
+        action = (
+            f"Kalau pola ini konsisten dari bulan ke bulan, data per {dim_label} ini "
+            f"layak diserahkan ke Produksi/R&D sebagai bukti kuantitatif — analisis "
+            f"akar penyebab di luar data sensory berada di luar cakupan QC Verifikator."
+        )
+
+    return {
+        "status": "ok", "observable": observable,
+        "inference": inference, "action": action,
+        "confirm": (
+            "Analisis ini hanya mencakup data sensory, bukan kesimpulan penyebab produksi. "
+            + CONFOUNDING_NOTE
+        ),
+    }
+
+
 def gen_insight_shift(sh_df: pd.DataFrame) -> dict:
     """
-    Generate insight dari gap rate per shift.
+    Generate insight dari gap rate per shift — lensa PROSES (KimFis vs Verifikator).
+    Insight ini SENGAJA dipisah dari insight pass rate (lensa OUTCOME) —
+    jangan digabung jadi satu narasi, karena keduanya diukur dari hal berbeda.
     sh_df: DataFrame dengan kolom Shift_Label, Rate %, Mismatch, Total
+
+    Metodologi 2 langkah (mencegah multiple comparison problem):
+      1. Omnibus test (chi-square) — cek dulu apakah ADA beda di antara
+         SEMUA shift sekaligus, sebelum nyari pasangan paling ekstrem.
+      2. Kalau omnibus signifikan, baru drill-down ke pasangan worst-vs-best,
+         pakai threshold Bonferroni (0.05 / jumlah pasangan) — bukan 0.05 polos,
+         karena kita "nyari" pasangan ini dari banyak kemungkinan.
     """
     valid = sh_df[sh_df["Total"] >= MIN_N]
     if valid.empty:
@@ -359,10 +710,6 @@ def gen_insight_shift(sh_df: pd.DataFrame) -> dict:
     worst  = valid.loc[valid["Rate %"].idxmax()]
     best   = valid.loc[valid["Rate %"].idxmin()]
     mean_r = valid["Rate %"].mean()
-    std_r  = valid["Rate %"].std()
-
-    # Threshold relatif: "tinggi" = > mean + 0.5*std
-    high_shifts = valid[valid["Rate %"] > mean_r + 0.5 * std_r]
 
     observable = (
         f"Shift **{worst['Shift_Label']}** mencatat gap rate tertinggi: "
@@ -371,41 +718,66 @@ def gen_insight_shift(sh_df: pd.DataFrame) -> dict:
         f"Rata-rata antar shift: {mean_r:.1f}%."
     )
 
-    # Layer 2: apakah spread antar shift besar?
+    # ── Langkah 1: Omnibus test — ada beda di antara SEMUA shift atau tidak? ──
+    groups = [(int(r["Mismatch"]), int(r["Total"])) for _, r in valid.iterrows()]
+    omnibus = _chi2_omnibus(groups)
+    k = len(groups)
+    n_pairs = k * (k - 1) // 2  # jumlah kemungkinan pasangan, misal 5 shift = 10 pasangan
     spread = worst["Rate %"] - best["Rate %"]
-    if spread >= 10:
-        inference = (
-            f"Selisih gap rate antar shift mencapai **{spread:.1f}%** — "
-            f"cukup besar untuk mengindikasikan perbedaan kondisi evaluasi "
-            f"atau komposisi analis yang bertugas per shift. "
-            f"Perlu investigasi lebih lanjut di luar data sensory."
-        )
-    elif spread >= 5:
-        inference = (
-            f"Selisih gap rate antar shift **{spread:.1f}%** — "
-            f"ada variasi antar shift tapi tidak ekstrem. "
-            f"Pantau terus apakah pola ini konsisten di bulan berikutnya."
-        )
-    else:
-        inference = (
-            f"Gap rate antar shift relatif merata (selisih {spread:.1f}%) — "
-            f"perbedaan shift bukan faktor dominan. "
-            f"Penyebab lebih mungkin ada di faktor lain (analis, produk, atau periode)."
-        )
 
-    action = (
-        f"Investigasi Shift **{worst['Shift_Label']}**: "
-        f"siapa analis yang bertugas di shift ini? "
-        f"Apakah ada kondisi evaluasi yang berbeda (waktu, suhu, pencahayaan)? "
-        f"Gunakan Tab Performa Analis untuk cek komposisi analis per shift."
-    ) if spread >= 5 else (
-        "Gap rate antar shift tidak berbeda signifikan — "
-        "fokus investigasi ke faktor analis dan parameter, bukan shift."
-    )
+    if omnibus["p_value"] is None or omnibus["p_value"] >= 0.05:
+        # Omnibus TIDAK signifikan -> berhenti di sini, jangan drill-down.
+        # Nyari pasangan ekstrem setelah omnibus gagal itu yang bikin
+        # "kelihatan beda" padahal cuma kebetulan cari-cari.
+        inference = (
+            f"Diuji ke SEMUA {k} shift sekaligus (bukan cuma pasangan yang kelihatan "
+            f"paling beda) — hasilnya belum cukup bukti ada perbedaan nyata antar shift. "
+            f"Selisih gap rate (**{spread:.1f}%**) kemungkinan besar variasi wajar."
+        )
+        action = (
+            "Gap rate antar shift tidak berbeda signifikan secara keseluruhan — "
+            "fokus investigasi ke faktor analis dan parameter, bukan shift."
+        )
+        need_action = False
+    else:
+        # Omnibus signifikan -> baru boleh drill-down, dengan threshold lebih
+        # ketat (Bonferroni) karena pasangan ini dipilih dari banyak kemungkinan.
+        alpha_corrected = 0.05 / n_pairs if n_pairs > 0 else 0.05
+        pval = _ztest_pvalue(worst["Rate %"] / 100, worst["Total"],
+                              best["Rate %"] / 100, best["Total"])
+
+        if pval is not None and pval < alpha_corrected:
+            inference = (
+                f"Diuji ke semua {k} shift sekaligus — ADA perbedaan nyata di antaranya "
+                f"(bukan kebetulan). Setelah ditelusuri, Shift {worst['Shift_Label']} vs "
+                f"{best['Shift_Label']} adalah pasangan yang paling mencolok "
+                f"(selisih {spread:.1f}%), dan ini tetap konsisten meski sudah "
+                f"mempertimbangkan bahwa kita membandingkan banyak pasangan sekaligus."
+            )
+            need_action = True
+        else:
+            inference = (
+                f"Diuji ke semua {k} shift sekaligus — ADA perbedaan nyata di antaranya. "
+                f"Tapi pasangan Shift {worst['Shift_Label']} vs {best['Shift_Label']} "
+                f"secara spesifik belum cukup kuat untuk disebut pasangan yang paling "
+                f"beda (bisa jadi bedanya ada di kombinasi shift lain)."
+            )
+            need_action = False
+
+        action = (
+            f"Investigasi Shift **{worst['Shift_Label']}**: "
+            f"siapa analis yang bertugas di shift ini? "
+            f"Apakah ada kondisi evaluasi yang berbeda (waktu, suhu, pencahayaan)? "
+            f"Gunakan section Performa Analis untuk cek komposisi analis per shift."
+        ) if need_action else (
+            "Ada perbedaan antar shift secara keseluruhan, tapi belum jelas shift mana "
+            "yang paling bertanggung jawab — perlu data lebih banyak untuk drill-down."
+        )
 
     confirm = (
         "Analisis ini hanya mencakup data sensory — temuan di atas adalah "
-        "batas lingkup yang bisa kami olah dari data evaluasi sensory."
+        "batas lingkup yang bisa kami olah dari data evaluasi sensory. "
+        + CONFOUNDING_NOTE
     )
 
     return {
@@ -430,43 +802,64 @@ def gen_insight_analyst_performance(perf: pd.DataFrame) -> dict:
 
     mean_r = valid["Rate %"].mean()
     std_r  = valid["Rate %"].std()
-    # Threshold relatif: "perlu perhatian" = > mean + 1*std
-    flagged = valid[valid["Rate %"] > mean_r + std_r]
+    flagged_desc = valid[valid["Rate %"] > mean_r + std_r]  # descriptive doang, bukan uji statistik
     best    = valid.loc[valid["Rate %"].idxmin()]
     worst   = valid.loc[valid["Rate %"].idxmax()]
+    k       = len(valid)
+    n_pairs = k * (k - 1) // 2
 
     observable = (
-        f"**{len(valid)}** analis dievaluasi. "
+        f"**{k}** analis dievaluasi. "
         f"**{worst['Analis']}** memiliki tingkat ketidaksesuaian tertinggi "
         f"({worst['Rate %']}%, {int(worst['Mismatch'])} dari {int(worst['Total'])} sampel). "
         f"**{best['Analis']}** terendah ({best['Rate %']}%)."
     )
 
-    # Layer 2
-    if len(flagged) > 0:
-        flagged_names = ", ".join(flagged.sort_values("Rate %", ascending=False)["Analis"].tolist())
+    # ── Omnibus test dulu: ada beda nyata di antara SEMUA analis atau tidak? ──
+    groups = [(int(r["Mismatch"]), int(r["Total"])) for _, r in valid.iterrows()]
+    omnibus = _chi2_omnibus(groups)
+
+    if omnibus["p_value"] is None or omnibus["p_value"] >= 0.05:
         inference = (
-            f"**{len(flagged)} analis** memiliki tingkat ketidaksesuaian yang "
-            f"menonjol dibanding rata-rata tim: **{flagged_names}**."
+            f"Diuji ke SEMUA {k} analis sekaligus — belum cukup bukti ada perbedaan "
+            f"nyata antar analis. Variasi yang kelihatan (termasuk {worst['Analis']} "
+            f"vs {best['Analis']}) kemungkinan besar variasi wajar, bukan pola yang "
+            f"konsisten per individu."
+        )
+        action = (
+            f"Tingkat ketidaksesuaian antar analis belum terbukti beda secara "
+            f"statistik — kalibrasi sebaiknya menyasar **seluruh tim**, bukan "
+            f"individu tertentu. Pertahankan sesi kalibrasi rutin."
         )
     else:
-        inference = (
-            f"Tidak ada analis yang menonjol jauh di atas yang lain — "
-            f"tingkat ketidaksesuaian relatif merata di antara semua analis."
-        )
+        alpha_corrected = 0.05 / n_pairs if n_pairs > 0 else 0.05
+        pval = _ztest_pvalue(worst["Rate %"] / 100, worst["Total"],
+                              best["Rate %"] / 100, best["Total"])
+        pair_sig = pval is not None and pval < alpha_corrected
 
-    # Action — berbasis tim, bukan individu
-    if len(flagged) > 0:
+        if len(flagged_desc) > 0:
+            flagged_names = ", ".join(flagged_desc.sort_values("Rate %", ascending=False)["Analis"].tolist())
+            inference = (
+                f"Diuji ke semua {k} analis sekaligus — ADA perbedaan nyata di "
+                f"antaranya (bukan kebetulan). **{len(flagged_desc)} analis** tingkat "
+                f"ketidaksesuaiannya paling jauh dari rata-rata tim: **{flagged_names}**. "
+            )
+        else:
+            inference = (
+                f"Diuji ke semua {k} analis sekaligus — ADA perbedaan nyata di "
+                f"antaranya, meski tidak ada yang menonjol jauh secara deskriptif. "
+            )
+        inference += (
+            f"Beda {worst['Analis']} vs {best['Analis']} tetap konsisten "
+            + ("meski sudah mempertimbangkan banyaknya analis yang dibandingkan."
+               if pair_sig else
+               "secara keseluruhan, meski pasangan spesifik ini belum tentu yang paling beda.")
+        )
         action = (
             f"Adakan **sesi kalibrasi tim** — fokus pada penyesuaian persepsi "
             f"antara analis dan Verifikator. "
             f"Gunakan heatmap drill-down di bawah untuk melihat pola gap "
             f"tiap analis dan jadikan bahan diskusi bersama, bukan evaluasi individu."
-        )
-    else:
-        action = (
-            f"Tingkat ketidaksesuaian antar analis relatif merata — "
-            f"pertahankan dengan sesi kalibrasi rutin."
         )
 
     return {
@@ -474,9 +867,10 @@ def gen_insight_analyst_performance(perf: pd.DataFrame) -> dict:
         "observable":  observable,
         "inference":   inference,
         "action":      action,
+        "confirm":     CONFOUNDING_NOTE,
         "worst":       worst["Analis"],
         "best":        best["Analis"],
-        "flagged":     flagged["Analis"].tolist(),
+        "flagged":     flagged_desc["Analis"].tolist(),
         "mean_rate":   round(mean_r, 1),
         "threshold":   round(mean_r + std_r, 1),
     }
@@ -662,6 +1056,7 @@ if __name__ == "__main__":
         gen_insight_parameter, gen_insight_product,
         gen_insight_shift, gen_insight_analyst_performance,
         gen_insight_tendency, gen_insight_drilldown,
+        gen_insight_quality_by_dim,
     ]
     for f in fns:
         print(f"  ✅ {f.__name__}")

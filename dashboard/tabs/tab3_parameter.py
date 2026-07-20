@@ -457,6 +457,21 @@ def _render_kualitas_per_produk(df: pd.DataFrame) -> None:
         )
         st.plotly_chart(fig_pass, use_container_width=True)
 
+    _priority = set(chart_df["Product_Name"]) & set(bot_pass["Product_Name"])
+    if _priority:
+        _plist = ", ".join(sorted(_priority)[:5])
+        st.info(
+            f"💡 **{len(_priority)} produk** muncul di kedua chart di atas — "
+            f"TP tinggi SEKALIGUS pass rate terendah: **{_plist}**. "
+            f"Ini prioritas utama untuk drill-down di bawah."
+        )
+    else:
+        st.caption(
+            "💡 Tidak ada produk yang tumpang tindih di kedua chart — "
+            "artinya TP tinggi dan pass rate rendah tersebar di produk berbeda. "
+            "Pilih produk mana pun di drill-down bawah sesuai prioritas."
+        )
+
     st.divider()
 
     # ── Drill-down per produk ─────────────────────────────────────
@@ -496,12 +511,14 @@ def _render_kualitas_per_produk(df: pd.DataFrame) -> None:
             insight_text = (
                 f"Produk ini sangat jarang Pass — {pass_rate}% dari {total_p} sampel. "
                 f"Semua TP adalah TP 1 (masih release), tapi berada di batas bawah standar. "
-                f"Risiko tinggi complaint — perlu evaluasi formula segera."
+                f"Risiko tinggi complaint — data ini layak diserahkan ke Produksi/R&D "
+                f"sebagai bukti untuk evaluasi formula lebih lanjut."
             )
         else:
             insight_text = (
                 f"Produk ini sangat jarang Pass — hanya {pass_rate}% dari {total_p} sampel. "
-                f"Perlu evaluasi formula atau proses produksi segera."
+                f"Data ini layak diserahkan ke Produksi/R&D sebagai bukti untuk evaluasi "
+                f"formula atau proses produksi."
             )
     elif tp_rate >= 50:
         insight_color = "#E65100"
@@ -510,12 +527,14 @@ def _render_kualitas_per_produk(df: pd.DataFrame) -> None:
             insight_text = (
                 f"Lebih dari separuh sampel ({tp_rate}%) menghasilkan TP 1 — masih bisa release, "
                 f"tapi produk ini konsisten berada di batas bawah standar. "
-                f"Perlu investigasi parameter untuk mencegah potensi complaint di masa depan."
+                f"Parameter penyebab di bawah bisa jadi bukti awal untuk diteruskan ke "
+                f"Produksi/R&D, mencegah potensi complaint di masa depan."
             )
         else:
             insight_text = (
                 f"Lebih dari separuh sampel ({tp_rate}%) menghasilkan TP. "
-                f"Perlu investigasi parameter yang paling sering menyimpang."
+                f"Parameter yang paling sering menyimpang (lihat di bawah) jadi titik awal "
+                f"paling relevan untuk diteruskan ke Produksi/R&D."
             )
     elif tp_rate >= 20:
         insight_color = "#185FA5"
@@ -528,8 +547,7 @@ def _render_kualitas_per_produk(df: pd.DataFrame) -> None:
         insight_color = "#2E8B57"
         insight_icon  = "🟢"
         insight_text  = (
-            f"Pass rate {pass_rate}% — kualitas produk ini cukup baik. "
-            f"Pertahankan konsistensi proses produksi."
+            f"Pass rate {pass_rate}% — kualitas produk ini cukup baik dari sisi data sensory."
         )
 
     st.markdown(
