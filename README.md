@@ -30,6 +30,31 @@ Di industri manufaktur produk susu dan krimer, setiap batch produksi dievaluasi 
 
 ---
 
+##  Memahami Status Sensory
+
+Sebelum masuk ke fitur dashboard, ini istilah kunci yang dipakai berulang di seluruh dokumen ini — biar nggak perlu nebak-nebak pas baca bagian selanjutnya.
+
+Tiap sampel dinilai pakai skala 6 tingkat, dari yang paling "kurang dari standar" sampai paling "lebih dari standar":
+
+```
+TP 2-  ←  TP 1-  ←  Pass  →  TP 1+  →  TP 2+       (TP 3 = kategori terpisah, off-taste)
+```
+
+| Status | Artinya | Konsekuensi |
+|---|---|---|
+| **Pass** | Sesuai standar | Aman direlease |
+| **TP 1- / TP 1+** | Sedikit di bawah (-) atau di atas (+) standar | Masih boleh direlease, dengan catatan |
+| **TP 2- / TP 2+** | Cukup jauh dari standar | Ditahan sementara, wajib Triangle Test dulu sebelum diputuskan release atau blok |
+| **TP 3** | Off-taste — rasa/aroma menyimpang jauh dari standar | Langsung ditahan/blok |
+
+**Soal arah (-/+):** dua-duanya sama-sama dianggap penyimpangan dari standar, cuma beda arah — "-" berarti parameternya kurang kuat/kurang terasa dari yang seharusnya, "+" berarti kelewat kuat/berlebih dari yang seharusnya. Contoh: "TP 1-" pada parameter Creamy berarti rasa creamy-nya kurang, "TP 1+" berarti creamy-nya kelewat kuat.
+
+**Khusus produk preshipment (mau diekspor):** aturannya lebih ketat — wajib 100% Pass, TP 1 sekalipun tidak diizinkan lolos.
+
+**Dua penilai, satu keputusan:** tiap sampel dinilai 2 kali — oleh tim **KimFis** (3 analis, hasil digabung jadi 1 lewat suara terbanyak) dan oleh **Verifikator** (yang mengambil sampel ulang dan jadi acuan akhir/ground truth). Dashboard ini fokus ke seberapa sering dua penilaian itu beda (disebut "gap") dan pola di baliknya.
+
+---
+
 ##  Arsitektur ETL Pipeline
 
 ```
@@ -94,7 +119,6 @@ Tab 5: Action per batch?      → Detail harian, export data, keputusan release
 - Breakdown per produk (composite stacked) + per shift (summary)
 - **Apakah CORAK gap beda per shift?** — chi-square test of independence (bukan cuma rate-nya yang dicek, tapi pola jenis gap-nya) dengan fallback otomatis ke kategori yang lebih sederhana kalau data per kategori terlalu tipis untuk diuji valid
 - 🚨 Gap Berbahaya: melibatkan TP 3, melibatkan TP 2, atau Beda Arah TP 1
-- ~~Sankey diagram aliran status~~ (dihapus — redundant dengan Heatmap, insight-nya sama persis)
 
 ### Tab 3 — 🔬 Parameter & Kualitas Produk
 **Subtab A — Gap per Parameter (untuk QC):**
